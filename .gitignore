@@ -1,0 +1,50 @@
+# Material interno de trabajo
+material-desarrollo/
+
+# Variables de entorno
+.env
+.env.*
+!.env.example
+
+# Herramientas de agentes y asistentes
+.claude/
+.codex/
+.opencode/
+.cursor/
+.cursorignore
+.aider*
+.continue/
+.windsurf/
+.augment/
+.github/copilot/
+.agent/
+.agents/
+.atl/
+.codegraph/
+*.session
+*.session.json
+*.agent
+*.agent.json
+
+# Archivos temporales y cachés
+.tmp/
+temp/
+tmp/
+.cache/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+env/
+
+# Editores y sistema operativo
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,11 @@
+flowchart LR
+    sensor["Sensor simulado<br/>Genera y envía mediciones"]
+    user["Usuario<br/>Solicita y consulta mediciones"]
+    backend["Backend FastAPI<br/>Valida, persiste y recupera datos"]
+    database[("PostgreSQL<br/>Almacena measurements")]
+
+    sensor -->|"POST /measurements<br/>HTTP"| backend
+    user -->|"GET /measurements<br/>GET /measurements/latest<br/>HTTP"| backend
+    backend -->|"Respuesta JSON"| user
+    backend -->|"INSERT / SELECT<br/>SQL"| database
+    database -->|"Resultados"| backend
