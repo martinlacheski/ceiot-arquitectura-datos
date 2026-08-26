@@ -25,6 +25,5 @@ La implementación disponible corresponde únicamente a [Clase 1](clase-01/READM
 - `programa-materia/`: fuente versionada del programa, alcance y objetivos académicos de la materia.
 - `clase-XX/README.md`: presentación y acceso al material de cada clase implementada.
 - `clase-XX/practica/README.md`: guía pública y autocontenida de la práctica.
-- `material-desarrollo/`: material interno de preparación, no versionado y no destinado a estudiantes.
 
 Para comenzar, ingresar en `clase-01/practica/` y seguir su [`README.md`](clase-01/practica/README.md).
