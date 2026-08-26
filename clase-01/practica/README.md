@@ -10,7 +10,7 @@ Fuente editable: [`arquitectura.mmd`](docs/diagrams/arquitectura.mmd).
 
 Los endpoints pertenecen al **backend FastAPI**. El sensor y el usuario se comunican con la API mediante HTTP; solamente el backend ejecuta SQL para guardar o recuperar mediciones en PostgreSQL. Las respuestas vuelven al cliente como JSON.
 
-Docker Compose ejecuta solamente dos servicios: `postgres` y `backend`. El simulador se ejecuta desde la computadora anfitriona.
+Docker Compose ejecuta tres servicios: `postgres`, `backend` y `pgadmin` (interfaz web para inspeccionar la base de datos). El simulador se ejecuta desde la computadora anfitriona.
 
 ## Requisitos
 
@@ -135,6 +135,38 @@ docker compose down -v
 
 El siguiente `docker compose up -d` creará un volumen vacío y volverá a ejecutar `database/init/01-init.sql`.
 
+## 7. Observar los datos con pgAdmin
+
+pgAdmin permite inspeccionar la tabla `measurements` desde el navegador, sin escribir SQL manualmente.
+
+obtener los valores de usuario y contraseña del `.env` para poder acceder al servicio:
+
+```bash
+PGADMIN_USER=tu_email@ejemplo.com
+PGADMIN_PASSWORD=una_password
+PGADMIN_PORT=5050
+```
+
+`PGADMIN_USER` debe tener formato de email: pgAdmin lo exige como usuario de acceso.
+
+Abrir [http://localhost:5050](http://localhost:5050) e iniciar sesión con `PGADMIN_USER` y `PGADMIN_PASSWORD`.
+
+Registrar el servidor de PostgreSQL (una sola vez):
+
+1. Click derecho en **Servers** → **Register** → **Server...**
+2. Pestaña **General** → **Name**: `ceiot-clase-01` (o el nombre que prefieras).
+3. Pestaña **Connection**:
+   - **Host name/address**: `postgres` (el nombre del servicio en la red de Docker Compose, no `localhost`).
+   - **Port**: `5432`.
+   - **Maintenance database**: el valor de `POSTGRES_DB`.
+   - **Username**: el valor de `POSTGRES_USER`.
+   - **Password**: el valor de `POSTGRES_PASSWORD`.
+4. Guardar.
+
+Para ver los datos: **Servers** → tu servidor → **Databases** → tu base → **Schemas** → **public** → **Tables** → `measurements` → click derecho → **View/Edit Data** → **All Rows**.
+
+Los datos persisten entre reinicios del contenedor `pgadmin` gracias al volumen nombrado `pgadmin_data`, salvo que se ejecute `docker compose down -v`.
+
 ## Qué observar
 
 - El dato se origina fuera del backend.
@@ -143,21 +175,3 @@ El siguiente `docker compose up -d` creará un volumen vacío y volverá a ejecu
 - `timestamp` representa cuándo ocurrió la medición; `created_at`, cuándo fue persistida.
 - La recuperación puede responder una colección histórica o una única medición reciente.
 
-## Preguntas de reflexión
-
-1. ¿Qué responsabilidades tiene el simulador y cuáles pertenecen al backend?
-2. ¿Qué cambia en el recorrido del dato si se detiene PostgreSQL?
-3. ¿Por qué `timestamp` y `created_at` pueden tener valores diferentes?
-4. ¿Qué información agrega la API al dato enviado por el sensor?
-5. ¿Por qué el histórico vacío es una lista con estado `200`, mientras que la última medición inexistente responde `404`?
-6. ¿Qué criterio determina cuál es la medición más reciente?
-7. ¿Por qué se necesita un desempate cuando dos mediciones comparten el mismo `timestamp`?
-8. ¿Qué evidencia muestra que el volumen persiste más que un contenedor?
-9. ¿Qué información se pierde al ejecutar `docker compose down -v`?
-10. ¿Qué limitaciones tendría esta solución si aumentaran la cantidad de dispositivos y mediciones?
-
-## Cierre y transición a Clase 2
-
-Esta clase construye una base observable y deliberadamente sencilla. Se utilizó una sola tabla y SQL directo, sin migraciones, índices ni capas adicionales, porque el foco está en comprender el recorrido y la persistencia del dato.
-
-En la Clase 2 se podrá partir de esta experiencia para profundizar en cómo representar, organizar y consultar los datos. Ese análisis requiere primero distinguir con claridad qué dato llega, cuándo ocurrió y cómo se recupera.
