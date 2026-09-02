@@ -1,0 +1,9 @@
+erDiagram
+  ORGANIZATION ||--o{ LOCATION : owns
+  ORGANIZATION ||--o{ DEVICE : owns
+  ORGANIZATION ||--o{ ORGANIZATION_USER : includes
+  USER ||--o{ ORGANIZATION_USER : belongs_to
+  DEVICE ||--o{ MEASUREMENT : records
+  DEVICE ||--o{ DEVICE_STATUS_HISTORY : changes
+  DEVICE ||--o{ DEVICE_LOCATION_HISTORY : moves
+  LOCATION ||--o{ DEVICE_LOCATION_HISTORY : receives

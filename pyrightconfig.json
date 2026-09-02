@@ -1,0 +1,19 @@
+{
+  "include": [
+    "clase-01/practica/backend",
+    "clase-02/practica/backend/app",
+    "clase-02/practica/backend/tests"
+  ],
+  "venvPath": "clase-02/practica/backend",
+  "venv": ".venv",
+  "executionEnvironments": [
+    {
+      "root": "clase-02/practica/backend",
+      "extraPaths": ["clase-02/practica/backend"]
+    },
+    {
+      "root": "clase-01/practica/backend",
+      "extraPaths": ["clase-01/practica/backend"]
+    }
+  ]
+}

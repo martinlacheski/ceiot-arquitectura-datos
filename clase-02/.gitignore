@@ -1,0 +1,8 @@
+# Local environment and generated artifacts for Clase 2
+practica/.env
+practica/backend/.venv/
+practica/backend/__pycache__/
+practica/backend/.pytest_cache/
+practica/frontend/node_modules/
+practica/frontend/dist/
+practica/frontend/coverage/

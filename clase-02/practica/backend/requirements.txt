@@ -1,0 +1,9 @@
+fastapi==0.115.12
+uvicorn[standard]==0.34.0
+# SQLModel 0.0.42 supports the Pydantic 2.13 series required by current FastAPI.
+sqlmodel==0.0.42
+asyncpg==0.30.0
+pydantic-settings==2.8.1
+pytest==8.3.5
+pytest-asyncio==0.25.3
+httpx==0.28.1

@@ -1,0 +1,17 @@
+erDiagram
+  organizations { uuid id PK string name UK }
+  users { uuid id PK string email UK }
+  organization_users { uuid organization_id FK uuid user_id FK string role }
+  locations { uuid id PK uuid organization_id FK string name }
+  devices { uuid id PK uuid organization_id FK string serial_number UK string name }
+  measurements { uuid id PK uuid device_id FK string variable decimal value string unit datetime recorded_at }
+  device_status_history { uuid id PK uuid device_id FK string status datetime started_at datetime ended_at }
+  device_location_history { uuid id PK uuid device_id FK uuid location_id FK datetime started_at datetime ended_at }
+  organizations ||--o{ locations : scopes
+  organizations ||--o{ devices : owns
+  organizations ||--o{ organization_users : has
+  users ||--o{ organization_users : has
+  devices ||--o{ measurements : produces
+  devices ||--o{ device_status_history : has
+  devices ||--o{ device_location_history : has
+  locations ||--o{ device_location_history : appears_in
