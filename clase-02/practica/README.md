@@ -15,6 +15,7 @@ Con los valores predeterminados, puede acceder directamente a:
 - [Backend — estado de la API](http://localhost:8000/health)
 - [Backend — documentación interactiva](http://localhost:8000/api/docs)
 - [Backend — organizaciones](http://localhost:8000/api/organizations)
+- [pgAdmin — inspección de la base de datos](http://localhost:5050)
 
 Si modifica `BACKEND_HOST_PORT` o `FRONTEND_HOST_PORT` en `.env`, ajuste estas URLs según corresponda.
 
@@ -69,6 +70,38 @@ docker compose up --build
 ```
 
 > `docker compose down -v` elimina deliberadamente todos los datos almacenados por esta práctica.
+
+### Observar los datos con pgAdmin
+
+pgAdmin permite inspeccionar las tablas del esquema desde el navegador, sin escribir SQL manualmente.
+
+Obtener los valores de usuario y contraseña del `.env`:
+
+```bash
+PGADMIN_USER=tu_email@ejemplo.com
+PGADMIN_PASSWORD=una_password
+PGADMIN_HOST_PORT=5050
+```
+
+`PGADMIN_USER` debe tener formato de email: pgAdmin lo exige como usuario de acceso.
+
+Abrir [http://localhost:5050](http://localhost:5050) e iniciar sesión con `PGADMIN_USER` y `PGADMIN_PASSWORD`.
+
+Registrar el servidor de PostgreSQL (una sola vez):
+
+1. Click derecho en **Servers** → **Register** → **Server...**
+2. Pestaña **General** → **Name**: `ceiot-clase-02` (o el nombre que prefieras).
+3. Pestaña **Connection**:
+   - **Host name/address**: `postgres` (el nombre del servicio en la red de Docker Compose, no `localhost`).
+   - **Port**: `5432`.
+   - **Maintenance database**: el valor de `POSTGRES_DB`.
+   - **Username**: el valor de `POSTGRES_USER`.
+   - **Password**: el valor de `POSTGRES_PASSWORD`.
+4. Guardar.
+
+Para ver los datos: **Servers** → tu servidor → **Databases** → tu base → **Schemas** → **public** → **Tables** → la tabla que quieras (por ejemplo `measurements`) → click derecho → **View/Edit Data** → **All Rows**.
+
+Los datos persisten entre reinicios del contenedor `pgadmin` gracias al volumen nombrado `pgadmin_data`, salvo que se ejecute `docker compose down -v`.
 
 ### Sin Docker
 

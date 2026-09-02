@@ -38,5 +38,19 @@ services:
     depends_on:
       - backend
 
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_USER}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD}
+    ports:
+      - "${PGADMIN_BIND_HOST:-127.0.0.1}:${PGADMIN_HOST_PORT:-5050}:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    depends_on:
+      postgres:
+        condition: service_healthy
+
 volumes:
   postgres_data:
+  pgadmin_data:
