@@ -26,13 +26,11 @@ describe("resource catalog", () => {
   });
 
   it("lista recursos desde la API local", async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValue(
-        new Response(JSON.stringify([{ id: "org-1", name: "Laboratorio" }]), {
-          status: 200,
-        }),
-      );
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify([{ id: "org-1", name: "Laboratorio" }]), {
+        status: 200,
+      }),
+    );
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(requestList("organizations")).resolves.toEqual([
@@ -49,7 +47,14 @@ describe("resource catalog", () => {
           status: 201,
         }),
       )
-      .mockResolvedValueOnce(new Response(null, { status: 409 }));
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            detail: "La operación viola una restricción del modelo.",
+          }),
+          { status: 409 },
+        ),
+      );
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(
@@ -65,6 +70,25 @@ describe("resource catalog", () => {
     );
     await expect(
       createItem("organizations", { name: "Duplicada" }),
-    ).rejects.toThrow("No se pudo guardar");
+    ).rejects.toThrow("Ya existe un registro o una relación no es válida");
+  });
+
+  it("distingue validación y fallos de conexión de los conflictos de integridad", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ detail: "Campo requerido" }), {
+          status: 422,
+        }),
+      )
+      .mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(createItem("organizations", {})).rejects.toThrow(
+      "Revise los campos requeridos",
+    );
+    await expect(createItem("organizations", {})).rejects.toThrow(
+      "No se pudo conectar con la API",
+    );
   });
 });

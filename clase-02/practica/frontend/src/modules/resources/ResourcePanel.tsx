@@ -1,121 +1,133 @@
-import { type FormEvent, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 
+import { Badge } from "../../components/ui/badge";
+import { Button } from "../../components/ui/button";
 import {
-  createItem,
-  requestList,
-  type ApiItem,
-  type ApiPayload,
-} from "../../shared/api/client";
-import type { ResourceDefinition } from "./catalog";
-
-function summarize(item: ApiItem): string {
-  return Object.entries(item)
-    .filter(([key]) => key !== "id" && key !== "created_at")
-    .slice(0, 4)
-    .map(([key, value]) => `${key}: ${String(value ?? "—")}`)
-    .join(" · ");
-}
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "../../components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "../../components/ui/dialog";
+import type { MeasurementFilters, ResourceDefinition } from "./catalog";
+import { ResourceFeedback } from "./ResourceFeedback";
+import { ResourceForm } from "./ResourceForm";
+import { ResourceTable, ResourceTableSkeleton } from "./ResourceTable";
+import { ResourceToolbar } from "./ResourceToolbar";
+import { useResourceData } from "./useResourceData";
 
 export function ResourcePanel({ resource }: { resource: ResourceDefinition }) {
-  const [items, setItems] = useState<ApiItem[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
-
-  async function load() {
-    setLoading(true);
-    setError("");
-    try {
-      setItems(await requestList(resource.endpoint));
-    } catch (cause) {
-      setError(
-        cause instanceof Error
-          ? cause.message
-          : "No se pudieron cargar los datos.",
-      );
-    } finally {
-      setLoading(false);
-    }
-  }
+  const { items, related, loading, submitting, error, success, load, create } =
+    useResourceData(resource);
+  const [search, setSearch] = useState("");
+  const [relationshipFilter, setRelationshipFilter] = useState<string>();
+  const [measurementFilters, setMeasurementFilters] =
+    useState<MeasurementFilters>({});
+  const [createDialogOpen, setCreateDialogOpen] = useState(false);
 
   useEffect(() => {
-    void load();
+    setSearch("");
+    setRelationshipFilter(undefined);
+    setMeasurementFilters({});
+    setCreateDialogOpen(false);
   }, [resource.endpoint]);
 
-  async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const formElement = event.currentTarget;
-    setError("");
-    setSuccess("");
-    const form = new FormData(formElement);
-    const payload = Object.fromEntries(form.entries()) as ApiPayload;
-    if (resource.endpoint === "measurements") {
-      payload.recorded_at = new Date(String(payload.recorded_at)).toISOString();
-      payload.value = Number(payload.value);
-    }
-    try {
-      await createItem(resource.endpoint, payload);
-      formElement.reset();
-      setSuccess("Registro creado correctamente.");
-      await load();
-    } catch (cause) {
-      setError(
-        cause instanceof Error
-          ? cause.message
-          : "No se pudo guardar el registro.",
-      );
-    }
-  }
+  const filterOptions =
+    resource.endpoint === "measurements"
+      ? (related.devices ?? [])
+      : (related.organizations ?? []);
 
   return (
-    <article
-      className="resource-panel"
-      aria-labelledby={`${resource.endpoint}-title`}
+    <section
+      className="mx-auto flex w-[min(100%-2rem,1500px)] flex-col gap-6 py-6 md:py-10"
+      role="tabpanel"
+      id={`panel-${resource.endpoint}`}
+      aria-labelledby={`tab-${resource.endpoint}`}
     >
-      <h2 id={`${resource.endpoint}-title`}>{resource.title}</h2>
-      <form className="resource-form" onSubmit={submit}>
-        {resource.fields.map((field) => (
-          <label
-            key={field.name}
-            htmlFor={`${resource.endpoint}-${field.name}`}
-          >
-            {field.label}
-            <input
-              id={`${resource.endpoint}-${field.name}`}
-              name={field.name}
-              type={field.type ?? "text"}
-              required={field.required ?? false}
-            />
-          </label>
-        ))}
-        <button type="submit">
-          Crear {resource.title.slice(0, -2).toLowerCase()}
-        </button>
-      </form>
-      {success && (
-        <p className="success-message" role="status">
-          {success}
-        </p>
-      )}
-      {error && (
-        <p className="error-message" role="alert">
-          {error}
-        </p>
-      )}
-      {loading ? (
-        <p aria-live="polite">Cargando registros…</p>
-      ) : items.length === 0 ? (
-        <p>No hay registros todavía.</p>
-      ) : (
-        <ul
-          className="resource-list"
-          aria-label={`Registros de ${resource.title.toLowerCase()}`}
+      <div className="flex flex-col justify-between gap-4 md:flex-row md:items-end">
+        <div className="flex flex-col gap-1">
+          <Badge variant="outline" className="w-fit">
+            Recurso del modelo
+          </Badge>
+          <h2 className="font-heading text-2xl font-semibold tracking-tight">
+            {resource.title}
+          </h2>
+          <p className="max-w-2xl text-sm text-muted-foreground">
+            {resource.description}
+          </p>
+        </div>
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => void load()}
+          disabled={loading}
         >
-          {items.map((item) => (
-            <li key={item.id}>{summarize(item)}</li>
-          ))}
-        </ul>
-      )}
-    </article>
+          Actualizar registros
+        </Button>
+      </div>
+      <ResourceFeedback
+        error={error}
+        success={success}
+        onRetry={() => void load()}
+      />
+      <Card>
+        <CardHeader>
+          <CardTitle>Registros</CardTitle>
+          <CardDescription>
+            {loading ? "Actualizando registros" : `${items.length} en total`}
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-4">
+          <ResourceToolbar
+            resource={resource}
+            related={filterOptions}
+            search={search}
+            onSearchChange={setSearch}
+            relationshipFilter={relationshipFilter}
+            onRelationshipFilterChange={setRelationshipFilter}
+            measurementFilters={measurementFilters}
+            onMeasurementFiltersChange={setMeasurementFilters}
+            onCreate={() => setCreateDialogOpen(true)}
+          />
+          {loading ? (
+            <ResourceTableSkeleton />
+          ) : (
+            <ResourceTable
+              resource={resource}
+              items={items}
+              search={search}
+              relationshipFilter={relationshipFilter}
+              measurementFilters={measurementFilters}
+              devices={related.devices ?? []}
+            />
+          )}
+        </CardContent>
+      </Card>
+      <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{resource.createLabel}</DialogTitle>
+            <DialogDescription>
+              Complete los campos para registrar una nueva entidad.
+            </DialogDescription>
+          </DialogHeader>
+          <ResourceForm
+            key={resource.endpoint}
+            resource={resource}
+            related={related}
+            submitting={submitting}
+            onCreate={create}
+            onSuccess={() => setCreateDialogOpen(false)}
+          />
+        </DialogContent>
+      </Dialog>
+    </section>
   );
 }
