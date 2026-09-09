@@ -25,6 +25,7 @@ material-desarrollo/
 *.session.json
 *.agent
 *.agent.json
+.pi/
 
 # Archivos temporales y cachés
 .tmp/

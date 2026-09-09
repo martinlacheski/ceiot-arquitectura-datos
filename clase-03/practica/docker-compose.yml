@@ -1,0 +1,50 @@
+name: ceiot-clase-03
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-ceiot_class3}
+      POSTGRES_USER: ${POSTGRES_USER:-ceiot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ceiot}
+    ports:
+      - "${POSTGRES_BIND_HOST:-127.0.0.1}:${POSTGRES_HOST_PORT:-5434}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/01-schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ./database/02-seed.sql:/docker-entrypoint-initdb.d/02-seed.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-student@example.edu}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-class3-local}
+    ports:
+      - "${PGADMIN_BIND_HOST:-127.0.0.1}:${PGADMIN_HOST_PORT:-5051}:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  query-client:
+    profiles: ["client"]
+    build: ./client
+    environment:
+      DATABASE_URL: ${CLIENT_DATABASE_URL:-postgresql://ceiot:ceiot@postgres:5432/ceiot_class3}
+      DEVICE_SERIAL: ${DEVICE_SERIAL:-CEIOT-A-01}
+      VARIABLE: ${VARIABLE:-temperature}
+      START_AT: ${START_AT:-2024-01-01T00:00:00Z}
+      END_AT: ${END_AT:-2024-02-01T00:00:00Z}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  pgadmin_data:
