@@ -8,7 +8,8 @@ Repositorio académico para recorrer el ciclo de vida del dato: desde su generac
 | --- | --- | --- |
 | 1 | Del dato a la persistencia y recuperación | [Clase 1](clase-01/README.md) |
 | 2 | Modelado y consultas sobre datos persistidos | [Clase 2](clase-02/README.md) · [Práctica](clase-02/practica/README.md) |
-| 3–8 | Evolución de la arquitectura de datos | Próximamente |
+| 3 | SQL aplicado sobre datos IoT persistidos | [Presentación](clase-03/Clase%203%20Presentacion.pdf) · [Práctica](clase-03/practica/README.md) |
+| 4–8 | Evolución de la arquitectura de datos | Próximamente |
 
 ## Documentos del repositorio
 
@@ -16,5 +17,6 @@ Repositorio académico para recorrer el ciclo de vida del dato: desde su generac
 - `programa-materia/`: fuente versionada del programa, alcance y objetivos académicos de la materia.
 - `clase-XX/README.md`: presentación y acceso al material de cada clase implementada.
 - `clase-XX/practica/README.md`: guía pública y autocontenida de la práctica.
+- `clase-03/practica/sql/`: recorrido progresivo de ejemplos SQL resueltos sobre el modelo IoT.
 
-Para comenzar con modelado de datos IoT, siga la [práctica de Clase 2](clase-02/practica/README.md).
+Para comenzar con modelado de datos IoT, siga la [práctica de Clase 2](clase-02/practica/README.md). Para practicar consultas SQL con PostgreSQL y pgAdmin, continúe con la [práctica de Clase 3](clase-03/practica/README.md).
