@@ -1,0 +1,44 @@
+name: ceiot-clase-04
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-ceiot_class4}
+      POSTGRES_USER: ${POSTGRES_USER:-ceiot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ceiot}
+    ports:
+      - "${POSTGRES_BIND_HOST:-127.0.0.1}:${POSTGRES_HOST_PORT:-5435}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/01-schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ./database/02-seed.sql:/docker-entrypoint-initdb.d/02-seed.sql:ro
+      - ./sql:/sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-student@example.edu}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-class4-local}
+    ports:
+      - "${PGADMIN_BIND_HOST:-127.0.0.1}:${PGADMIN_HOST_PORT:-5052}:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+      # pgAdmin's Query Tool "Open File" dialog is jailed to
+      # /var/lib/pgadmin/storage/<email with only "@" replaced by "_">
+      # (confirmed by inspecting the running container: the "." is kept).
+      # This path matches the default PGADMIN_DEFAULT_EMAIL (student@example.edu);
+      # if you change that email in .env, rename this folder to match.
+      - ./sql:/var/lib/pgadmin/storage/student_example.edu:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  pgadmin_data:
