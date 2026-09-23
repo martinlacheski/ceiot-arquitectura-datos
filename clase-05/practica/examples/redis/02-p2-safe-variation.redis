@@ -1,0 +1,8 @@
+# CONTEXTO: un TTL menor que el intervalo de reporte produce falsos UNKNOWN.
+# EJEMPLO EJECUTABLE: renueva la presencia de AMB-001 durante solo 20 segundos.
+# OBSERVACIÓN ESPERADA: TTL devuelve un valor entre 1 y 20, y luego -2.
+# VARIACIONES SEGURAS: observar PTTL sin modificar las demás claves.
+# RECUPERACIÓN: ejecutar 03-p2-recover.redis mediante el runner acotado.
+
+SET device:AMB-001:presence ONLINE EX 20
+TTL device:AMB-001:presence

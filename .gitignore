@@ -26,6 +26,7 @@ material-desarrollo/
 *.agent
 *.agent.json
 .pi/
+odd/
 
 # Archivos temporales y cachés
 .tmp/

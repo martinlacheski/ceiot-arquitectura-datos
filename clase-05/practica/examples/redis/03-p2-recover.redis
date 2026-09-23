@@ -1,0 +1,19 @@
+# CONTEXTO: reconstruye las vistas actuales canónicas de los tres dispositivos.
+# EJEMPLO EJECUTABLE: repone estado, medición, última conexión y presencia con el TTL configurado.
+# OBSERVACIÓN ESPERADA: las doce claves recuperan los valores canónicos y se informa el TTL de AMB-001.
+# VARIACIONES SEGURAS: repetir toda la secuencia conserva los mismos valores y renueva los TTL.
+# RECUPERACIÓN: la propia operación es idempotente y puede repetirse.
+
+SET device:AMB-001:state ONLINE
+SET device:AMB-001:last_measurement '{"temperature":24.6,"humidity":48.2,"measured_at":"2025-05-12T10:32:00Z"}'
+SET device:AMB-001:last_seen 2025-05-12T10:32:04Z
+SET device:AMB-001:presence ONLINE EX __PRESENCE_TTL_SECONDS__
+SET device:AIR-002:state ONLINE
+SET device:AIR-002:last_measurement '{"temperature":24.6,"humidity":47.8,"co2":812,"measured_at":"2025-05-12T10:32:00Z"}'
+SET device:AIR-002:last_seen 2025-05-12T10:32:03Z
+SET device:AIR-002:presence ONLINE EX __PRESENCE_TTL_SECONDS__
+SET device:ACT-003:state IDLE
+SET device:ACT-003:last_measurement '{"ventilation_state":"OFF","measured_at":"2025-05-12T10:32:00Z"}'
+SET device:ACT-003:last_seen 2025-05-12T10:32:02Z
+SET device:ACT-003:presence ONLINE EX __PRESENCE_TTL_SECONDS__
+TTL device:AMB-001:presence

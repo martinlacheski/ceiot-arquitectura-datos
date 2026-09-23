@@ -1,0 +1,235 @@
+name: ceiot-clase-05
+
+services:
+  mongo:
+    image: mongo:7.0.16
+    environment:
+      MONGO_INITDB_DATABASE: ${MONGO_DATABASE:?required}
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME:?required}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:?required}
+    ports:
+      - "${MONGO_BIND_HOST:?required}:${MONGO_HOST_PORT:?required}:27017"
+    volumes:
+      - mongo_data:/data/db
+      - ./database/mongodb:/lab/database:ro
+      - ./scripts:/lab/scripts:ro
+      - ./examples/mongodb:/lab/examples/mongodb:ro
+    mem_limit: ${MONGO_MEMORY_LIMIT:?required}
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          mongosh --quiet --username "$$MONGO_INITDB_ROOT_USERNAME"
+          --password "$$MONGO_INITDB_ROOT_PASSWORD"
+          --authenticationDatabase admin
+          --eval "quit(db.adminCommand({ ping: 1 }).ok ? 0 : 2)"
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 15s
+
+  mongo-init:
+    image: mongo:7.0.16
+    profiles: ["init"]
+    entrypoint: ["/bin/sh", "/lab/scripts/init-mongodb.sh"]
+    environment:
+      MONGO_DATABASE: ${MONGO_DATABASE:?required}
+      MONGO_ROOT_USERNAME: ${MONGO_ROOT_USERNAME:?required}
+      MONGO_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:?required}
+    volumes:
+      - ./database/mongodb:/lab/database:ro
+      - ./scripts:/lab/scripts:ro
+    depends_on:
+      mongo:
+        condition: service_healthy
+    restart: "no"
+
+  mongo-express:
+    image: mongo-express:latest
+    environment:
+      ME_CONFIG_MONGODB_SERVER: mongo
+      ME_CONFIG_MONGODB_PORT: "27017"
+      ME_CONFIG_MONGODB_ENABLE_ADMIN: "true"
+      ME_CONFIG_MONGODB_ADMINUSERNAME: ${MONGO_ROOT_USERNAME:?required}
+      ME_CONFIG_MONGODB_ADMINPASSWORD: ${MONGO_ROOT_PASSWORD:?required}
+      ME_CONFIG_BASICAUTH_ENABLED: "true"
+      ME_CONFIG_BASICAUTH_USERNAME: ${MONGO_EXPRESS_USERNAME:?required}
+      ME_CONFIG_BASICAUTH_PASSWORD: ${MONGO_EXPRESS_PASSWORD:?required}
+    ports:
+      - "${MONGO_EXPRESS_BIND_HOST:?required}:${MONGO_EXPRESS_HOST_PORT:?required}:8081"
+    volumes:
+      - mongo_express_data:/data/db
+    mem_limit: ${MONGO_EXPRESS_MEMORY_LIMIT:?required}
+    depends_on:
+      mongo:
+        condition: service_healthy
+
+  redis:
+    image: redis:latest
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --requirepass
+      - ${REDIS_PASSWORD:?required}
+    environment:
+      REDIS_USERNAME: ${REDIS_USERNAME:?required}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?required}
+      REDIS_DATABASE: ${REDIS_DATABASE:?required}
+      REDIS_PRESENCE_TTL_SECONDS: ${REDIS_PRESENCE_TTL_SECONDS:?required}
+    ports:
+      - "${REDIS_BIND_HOST:?required}:${REDIS_HOST_PORT:?required}:6379"
+    volumes:
+      - redis_data:/data
+      - ./database/redis:/lab/database:ro
+      - ./scripts:/lab/scripts:ro
+      - ./examples/redis:/lab/examples/redis:ro
+    mem_limit: ${REDIS_MEMORY_LIMIT:?required}
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          redis-cli --user "$$REDIS_USERNAME" --pass "$$REDIS_PASSWORD"
+          -n "$$REDIS_DATABASE" ping | grep -q PONG
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
+  redis-init:
+    image: redis:latest
+    profiles: ["init"]
+    entrypoint: ["/bin/sh", "/lab/scripts/init-redis.sh"]
+    environment:
+      REDIS_USERNAME: ${REDIS_USERNAME:?required}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?required}
+      REDIS_DATABASE: ${REDIS_DATABASE:?required}
+      REDIS_PRESENCE_TTL_SECONDS: ${REDIS_PRESENCE_TTL_SECONDS:?required}
+    volumes:
+      - ./database/redis:/lab/database:ro
+      - ./scripts:/lab/scripts:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: "no"
+
+  redisinsight:
+    image: redis/redisinsight:latest
+    environment:
+      RI_REDIS_ALIAS: ${REDISINSIGHT_ALIAS:?required}
+      RI_REDIS_HOST: redis
+      RI_REDIS_PORT: "6379"
+      RI_REDIS_USERNAME: ${REDIS_USERNAME:?required}
+      RI_REDIS_PASSWORD: ${REDIS_PASSWORD:?required}
+    ports:
+      - "${REDISINSIGHT_BIND_HOST:?required}:${REDISINSIGHT_HOST_PORT:?required}:5540"
+    volumes:
+      - redisinsight_data:/data
+    mem_limit: ${REDISINSIGHT_MEMORY_LIMIT:?required}
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  cassandra:
+    image: cassandra:latest
+    environment:
+      CASSANDRA_CLUSTER_NAME: ${CASSANDRA_CLUSTER_NAME:?required}
+      CASSANDRA_DC: ${CASSANDRA_DATACENTER:?required}
+      CASSANDRA_RACK: ${CASSANDRA_RACK:?required}
+      CASSANDRA_ENDPOINT_SNITCH: ${CASSANDRA_ENDPOINT_SNITCH:?required}
+      CASSANDRA_NUM_TOKENS: ${CASSANDRA_NUM_TOKENS:?required}
+      MAX_HEAP_SIZE: ${CASSANDRA_MAX_HEAP_SIZE:?required}
+      HEAP_NEWSIZE: ${CASSANDRA_HEAP_NEWSIZE:?required}
+      # Metadato del laboratorio; la imagen no crea el keyspace.
+      LAB_CASSANDRA_KEYSPACE: ${CASSANDRA_KEYSPACE:?required}
+    ports:
+      - "${CASSANDRA_BIND_HOST:?required}:${CASSANDRA_HOST_PORT:?required}:9042"
+    volumes:
+      - cassandra_data:/var/lib/cassandra
+      - ./database/cassandra:/lab/database:ro
+      - ./scripts:/lab/scripts:ro
+      - ./examples/cassandra:/lab/examples/cassandra:ro
+    mem_limit: ${CASSANDRA_MEMORY_LIMIT:?required}
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          cqlsh localhost 9042
+          -e "SELECT release_version FROM system.local;" >/dev/null 2>&1
+      interval: 10s
+      timeout: 10s
+      retries: 18
+      start_period: 120s
+
+  cassandra-init:
+    image: cassandra:latest
+    profiles: ["init"]
+    entrypoint: ["/bin/sh", "/lab/scripts/init-cassandra.sh"]
+    environment:
+      LAB_CASSANDRA_KEYSPACE: ${CASSANDRA_KEYSPACE:?required}
+      CASSANDRA_REPLICATION_FACTOR: ${CASSANDRA_REPLICATION_FACTOR:?required}
+    volumes:
+      - ./database/cassandra:/lab/database:ro
+      - ./scripts:/lab/scripts:ro
+    depends_on:
+      cassandra:
+        condition: service_healthy
+    restart: "no"
+
+  neo4j:
+    image: neo4j:latest
+    environment:
+      NEO4J_AUTH: ${NEO4J_USERNAME:?required}/${NEO4J_PASSWORD:?required}
+      LAB_NEO4J_USERNAME: ${NEO4J_USERNAME:?required}
+      LAB_NEO4J_PASSWORD: ${NEO4J_PASSWORD:?required}
+      LAB_NEO4J_DATABASE: ${NEO4J_DATABASE:?required}
+      NEO4J_initial_dbms_default__database: ${NEO4J_DATABASE:?required}
+      NEO4J_server_memory_heap_initial__size: >-
+        ${NEO4J_HEAP_INITIAL_SIZE:?required}
+      NEO4J_server_memory_heap_max__size: ${NEO4J_HEAP_MAX_SIZE:?required}
+      NEO4J_server_memory_pagecache_size: ${NEO4J_PAGECACHE_SIZE:?required}
+    ports:
+      - "${NEO4J_HTTP_BIND_HOST:?required}:${NEO4J_HTTP_HOST_PORT:?required}:7474"
+      - "${NEO4J_BOLT_BIND_HOST:?required}:${NEO4J_BOLT_HOST_PORT:?required}:7687"
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+      - ./database/neo4j:/lab/database:ro
+      - ./scripts:/lab/scripts:ro
+      - ./examples/neo4j:/lab/examples/neo4j:ro
+    mem_limit: ${NEO4J_MEMORY_LIMIT:?required}
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          cypher-shell -a bolt://localhost:7687 -u "$${NEO4J_AUTH%%/*}"
+          -p "$${NEO4J_AUTH#*/}" "RETURN 1;" >/dev/null 2>&1
+      interval: 10s
+      timeout: 10s
+      retries: 20
+      start_period: 30s
+
+  neo4j-init:
+    image: neo4j:latest
+    profiles: ["init"]
+    entrypoint: ["/bin/sh", "/lab/scripts/init-neo4j.sh"]
+    environment:
+      NEO4J_USERNAME: ${NEO4J_USERNAME:?required}
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:?required}
+      NEO4J_DATABASE: ${NEO4J_DATABASE:?required}
+    volumes:
+      - ./database/neo4j:/lab/database:ro
+      - ./scripts:/lab/scripts:ro
+    depends_on:
+      neo4j:
+        condition: service_healthy
+    restart: "no"
+
+volumes:
+  mongo_data:
+  mongo_express_data:
+  redis_data:
+  redisinsight_data:
+  cassandra_data:
+  neo4j_data:
+  neo4j_logs:

@@ -1,0 +1,8 @@
+# CONTEXTO: P2 lee estado, última medición y última conexión por clave conocida.
+# EJEMPLO EJECUTABLE: consulta las tres vistas actuales y la presencia de AMB-001.
+# OBSERVACIÓN ESPERADA: devuelve ONLINE, el JSON con 24.6 °C, 2025-05-12T10:32:04Z y el TTL restante.
+# VARIACIONES SEGURAS: reemplazar AMB-001 por AIR-002 o ACT-003.
+# RECUPERACIÓN: estas lecturas no modifican datos; pueden repetirse sin cambios.
+
+MGET device:AMB-001:state device:AMB-001:last_measurement device:AMB-001:last_seen
+TTL device:AMB-001:presence
