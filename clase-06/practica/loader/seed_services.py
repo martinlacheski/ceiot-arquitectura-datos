@@ -22,7 +22,7 @@ from reportlab.lib.pagesizes import A4
 from reportlab.pdfbase.pdfmetrics import stringWidth
 from reportlab.pdfgen import canvas
 
-OBJECT_KEY = "manuales/air-quality-pro/v1/manual.pdf"
+OBJECT_KEY = "manuales/env-x/v1/manual_ENV_X.pdf"
 CONTENT_TYPE = "application/pdf"
 REDIS_KEY = "iot:last-known:AIR-002"
 REDIS_TTL_SECONDS = 3600
@@ -45,7 +45,7 @@ def load_source(path: Path) -> dict[str, Any]:
         raise ValueError("La fuente del manual tiene campos inesperados o faltantes")
     if source["schema_version"] != 1 or source["version"] != 1:
         raise ValueError("Sólo se admite la versión 1 del esquema y del manual")
-    if source["document_id"] != "air-quality-pro-manual":
+    if source["document_id"] != "env-x-manual":
         raise ValueError("El identificador del manual no coincide con el seed SQL")
     pages = source["pages"]
     if [page.get("page") for page in pages] != [1, 2]:

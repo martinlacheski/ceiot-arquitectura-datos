@@ -56,15 +56,15 @@ class FakeCatalogConnection:
 def test_seed_selection_parameterizes_canonical_id_and_keeps_newest_version() -> None:
     connection = FakeCatalogConnection(
         [
-            (SEED_DOCUMENT_ID, 1, "manuales/air-quality-pro/v1/manual.pdf", "available"),
-            (SEED_DOCUMENT_ID, 2, "manuales/air-quality-pro/v2/manual.pdf", "available"),
+            (SEED_DOCUMENT_ID, 1, "manuales/env-x/v1/manual_ENV_X_v1.pdf", "available"),
+            (SEED_DOCUMENT_ID, 2, "manuales/env-x/v2/manual_ENV_X_v2.pdf", "available"),
             ("upload-0123456789abcdef01234567", 99, "uploads/new.pdf", "available"),
         ]
     )
 
     selected = read_available_document(connection)  # type: ignore[arg-type]
 
-    assert selected == (SEED_DOCUMENT_ID, 2, "manuales/air-quality-pro/v2/manual.pdf")
+    assert selected == (SEED_DOCUMENT_ID, 2, "manuales/env-x/v2/manual_ENV_X_v2.pdf")
     assert "WHERE document_id = %s" in connection.catalog_cursor.sql
     assert "storage_status = 'available'" in connection.catalog_cursor.sql
     assert "ORDER BY version DESC" in connection.catalog_cursor.sql
@@ -74,12 +74,12 @@ def test_seed_selection_parameterizes_canonical_id_and_keeps_newest_version() ->
 def test_available_upload_is_not_used_when_canonical_seed_is_unavailable() -> None:
     connection = FakeCatalogConnection(
         [
-            (SEED_DOCUMENT_ID, 1, "manuales/air-quality-pro/v1/manual.pdf", "pending_upload"),
+            (SEED_DOCUMENT_ID, 1, "manuales/env-x/v1/manual_ENV_X.pdf", "pending_upload"),
             ("upload-0123456789abcdef01234567", 2, "uploads/new.pdf", "available"),
         ]
     )
 
-    with pytest.raises(RuntimeError, match="air-quality-pro-manual.*no está disponible"):
+    with pytest.raises(RuntimeError, match="env-x-manual.*no está disponible"):
         read_available_document(connection)  # type: ignore[arg-type]
 
     assert "WHERE document_id = %s" in connection.catalog_cursor.sql

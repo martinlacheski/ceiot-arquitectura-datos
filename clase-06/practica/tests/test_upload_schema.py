@@ -205,11 +205,18 @@ def test_seeded_manual_metadata_matches_its_stored_chunks() -> None:
         observed = connection.execute(
             """
             SELECT
+                (SELECT count(*) FROM public.locations),
                 (SELECT count(*) FROM public.devices),
+                -- El total global crece con el historial horario reciente de
+                -- ENV-X (ver postgres/seed/01-iot.sql); sólo el día fijo
+                -- 2025-05-12 permanece con un conteo exacto y estable.
+                (SELECT count(*) FROM public.measurements
+                 WHERE measured_at >= '2025-05-12T00:00:00Z'
+                   AND measured_at < '2025-05-13T00:00:00Z'),
                 (SELECT count(*) FROM public.measurements),
                 (SELECT count(*)
                  FROM public.manual_documents
-                 WHERE document_id = 'air-quality-pro-manual'
+                 WHERE document_id = 'env-x-manual'
                    AND version = 1
                    AND storage_status = 'available'),
                 document.sha256,
@@ -226,7 +233,7 @@ def test_seeded_manual_metadata_matches_its_stored_chunks() -> None:
               ON chunk.document_id = document.document_id
              AND chunk.version = document.version
              AND chunk.object_key = document.object_key
-            WHERE document.document_id = 'air-quality-pro-manual'
+            WHERE document.document_id = 'env-x-manual'
               AND document.version = 1
             GROUP BY
                 document.document_id,
@@ -237,17 +244,36 @@ def test_seeded_manual_metadata_matches_its_stored_chunks() -> None:
             """
         ).fetchone()
 
-    assert observed == (
-        3,
-        8,
-        1,
-        None,
-        None,
-        None,
-        "indexed",
-        4,
-        "intfloat/multilingual-e5-small",
-        4,
-        1,
-        "intfloat/multilingual-e5-small",
-    )
+    (
+        location_count,
+        device_count,
+        fixed_day_measurement_count,
+        total_measurement_count,
+        manual_available_count,
+        sha256,
+        byte_count,
+        page_count,
+        index_status,
+        chunk_count,
+        embedding_model,
+        chunk_join_count,
+        distinct_chunk_models,
+        min_chunk_model,
+    ) = observed
+
+    # Ubicaciones y dispositivos son estables: 3 ubicaciones y 4 dispositivos
+    # (AIR-002, AMB-001/ENV-X, ACT-003, AMB-005/ENV-X).
+    assert location_count == 3
+    assert device_count == 4
+    assert fixed_day_measurement_count == 8
+    # El historial horario reciente de ENV-X agrega al menos 96 filas
+    # (48 de temperatura + 48 de humedad); resembrar en otra hora sólo suma.
+    assert total_measurement_count >= 8 + 96
+    assert manual_available_count == 1
+    assert (sha256, byte_count, page_count) == (None, None, None)
+    assert index_status == "indexed"
+    assert chunk_count == 4
+    assert embedding_model == "intfloat/multilingual-e5-small"
+    assert chunk_join_count == 4
+    assert distinct_chunk_models == 1
+    assert min_chunk_model == "intfloat/multilingual-e5-small"

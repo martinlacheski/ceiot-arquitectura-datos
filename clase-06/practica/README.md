@@ -1,6 +1,6 @@
 # Práctica autónoma de especialización e IA sobre datos IoT
 
-Esta práctica conecta TimescaleDB, PostGIS, Redis, SeaweedFS S3, carga de PDF, embeddings E5, pgvector, RAG y Text-to-SQL en un único caso pequeño: el dispositivo de calidad de aire `AIR-002`. Todo el recorrido está resuelto y es no evaluativo. Primero ejecutá el camino rápido; después observá cada tecnología de forma nativa con el ritmo **comando → observable esperado → interpretación → variación segura → recuperación**.
+Esta práctica conecta TimescaleDB, PostGIS, Redis, SeaweedFS S3, carga de PDF, embeddings E5, pgvector, RAG y Text-to-SQL en un caso pequeño con dos dispositivos protagonistas: el sensor ambiental `AMB-001` (modelo `ENV-X`) en el **Aula 204**, cuyo manual describe la recalibración tras reemplazar la batería, y el sensor de calidad de aire `AIR-002` en el Laboratorio 101. Un tercer dispositivo `ENV-X` (`AMB-005`) vive en Ciudad Universitaria, a unos 10 km, y sirve para probar proximidad geográfica. Todo el recorrido está resuelto y es no evaluativo. Primero ejecutá el camino rápido; después observá cada tecnología de forma nativa con el ritmo **comando → observable esperado → interpretación → variación segura → recuperación**.
 
 PostgreSQL conserva la verdad base; Redis mantiene una proyección temporal del último estado; SeaweedFS conserva tanto el manual inicial como cada PDF cargado; pgvector indexa fragmentos derivados para recuperarlos por similitud. La aplicación pública consulta con `ai_readonly` y `rag_readonly`: no recibe credenciales de escritura. Sólo conserva la clave de OpenRouter para una consulta posterior. La escritura queda aislada en el servicio interno no publicado `uploader`, que usa exclusivamente `rag_ingest`, no recibe la clave de OpenRouter ni credenciales de propietario y está limitado a 2 GiB, 2 CPU y 256 procesos.
 
@@ -26,15 +26,21 @@ cd clase-06/practica
    docker compose --env-file .env -f compose.yaml up -d --build --wait
    ```
 
-3. Cargá las ocho mediciones deterministas:
+3. Sobre un volumen existente creado antes de esta alineación, aplicá primero la evolución idempotente que agrega ubicaciones geográficas (podés repetirla sin riesgo; también corre sola en un volumen fresco):
+
+   ```bash
+   docker compose --env-file .env -f compose.yaml exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1' < postgres/init/06-locations.sql
+   ```
+
+4. Cargá las ubicaciones, los dispositivos y el historial de mediciones:
 
    ```bash
    docker compose --env-file .env -f compose.yaml exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1' < postgres/seed/01-iot.sql
    ```
 
-   El resultado final debe mostrar `device_count=3`, `measurement_count=8` y `manual_count=1` en un volumen fresco, antes de cargar otros PDF. Después de una carga, el recuento de documentos crece; no esperes que vuelva a uno.
+   El resultado final debe mostrar `location_count=3`, `device_count=4`, `manual_count=1` y `measurement_count` igual o mayor a `104` (8 mediciones fijas del 2025-05-12 más 96 horas recientes de `ENV-X`) en un volumen fresco, antes de cargar otros PDF. Repetir el seed en una hora distinta agrega mediciones nuevas: el conteo crece con cada resiembra tardía y no vuelve a 104. Después de una carga de PDF, el recuento de documentos también crece; no esperes que vuelva a uno.
 
-4. Generá el PDF de dos páginas, subilo a S3 y proyectá el último estado a Redis:
+5. Generá el PDF de dos páginas, subilo a S3 y proyectá el último estado a Redis:
 
    ```bash
    docker compose --env-file .env -f compose.yaml run --rm loader
@@ -42,15 +48,15 @@ cd clase-06/practica
 
    La salida confirma el bucket y la clave, `PDF=2 páginas`, una huella SHA-256 y un TTL de Redis cercano a `3600s`.
 
-5. Descargá E5 la primera vez e indexá los cuatro fragmentos:
+6. Descargá E5 la primera vez e indexá los cuatro fragmentos:
 
    ```bash
    docker compose --env-file .env -f compose.yaml run --rm --entrypoint python loader -m loader.ingest_vectors
    ```
 
-   La salida esperada termina con `Indexación completa: 4 chunks de air-quality-pro-manual v1`.
+   La salida esperada termina con `Indexación completa: 4 chunks de env-x-manual v1`.
 
-6. Abrí [http://127.0.0.1:8006/](http://127.0.0.1:8006/) o verificá primero la API:
+7. Abrí [http://127.0.0.1:8006/](http://127.0.0.1:8006/) o verificá primero la API:
 
    ```bash
    curl --fail http://127.0.0.1:8006/health
@@ -146,16 +152,17 @@ docker compose --env-file .env -f compose.yaml exec -T postgres sh -c 'psql -U "
 ### Observable esperado
 
 - `measurements` aparece como hypertable con una dimensión temporal.
-- Hay `8` mediciones en total y `5` pertenecen a `AIR-002`.
+- Sobre el día fijo 2025-05-12 hay `8` mediciones y `5` pertenecen a `AIR-002`.
 - `time_bucket('1 minute', ...)` devuelve dos minutos para CO₂: `802.5 ppm` a las 10:31 y `812.0 ppm` a las 10:32.
+- "¿Cuál fue la temperatura promedio del Aula 204 durante las últimas 24 horas?" (filmina Clase 6) siempre devuelve una fila con promedio y `sample_count`, porque el seed ancla 48 horas de temperatura de `ENV-X` (`AMB-001`) a la hora de ejecución. El desglose horario muestra `has_suspect_reading=true` en las últimas horas por la anomalía sembrada.
 
 ### Interpretación
 
-TimescaleDB particiona el historial por `measured_at` sin quitarle a PostgreSQL sus restricciones ni SQL. El promedio de 10:31 usa `799` y `806`; el de 10:32 usa la única lectura `812`.
+TimescaleDB particiona el historial por `measured_at` sin quitarle a PostgreSQL sus restricciones ni SQL. El promedio de 10:31 usa `799` y `806`; el de 10:32 usa la única lectura `812`. La consulta de Aula 204 recorre `locations -> devices -> measurements`, tal como piden las notas de la filmina, y no depende de una fecha fija: `now() - interval '24 hours'` siempre encuentra datos porque el seed reancla el historial reciente cada vez que se ejecuta.
 
 ### Variación segura
 
-Repetí sólo el `SELECT` de agregación con un rango final exclusivo `10:32:00Z`. Vas a conservar el bucket de 10:31 y excluir el de 10:32. No cambies el seed.
+Repetí sólo el `SELECT` de agregación fija con un rango final exclusivo `10:32:00Z`. Vas a conservar el bucket de 10:31 y excluir el de 10:32. No cambies el seed.
 
 ### Recuperación
 
@@ -171,20 +178,22 @@ docker compose --env-file .env -f compose.yaml exec -T postgres sh -c 'psql -U "
 
 ### Observable esperado
 
-`ST_DWithin(..., 30)` devuelve exactamente:
+`ST_DWithin(..., 30)` desde `AIR-002` devuelve exactamente:
 
 - `AIR-002`, a `0.0 m`;
 - `AMB-001`, a aproximadamente `20 m`.
 
-`ACT-003`, a unos 60 m, queda fuera. La segunda consulta confirma un índice GiST llamado `devices_position_gix`.
+`ACT-003`, a unos 60 m, queda fuera. La consulta siguiente confirma un índice GiST llamado `devices_position_gix`.
+
+"¿Qué dispositivos se encuentran a menos de 2 km de esta ubicación?" (filmina Clase 6), usando un punto arbitrario cercano al Aula 204, devuelve `AIR-002`, `AMB-001` (`ENV-X`) y `ACT-003`, los tres a menos de 100 m. `AMB-005` (`ENV-X` en Ciudad Universitaria, a unos 10 km) queda excluido. La última consulta confirma el índice GiST `locations_position_gix`.
 
 ### Interpretación
 
-La columna es `geography(Point, 4326)`, por lo que el radio y `ST_Distance` se expresan en metros. `ST_DWithin` formula el filtro espacial y el índice GiST permite evitar una comparación exhaustiva cuando el corpus crece.
+La columna es `geography(Point, 4326)`, por lo que el radio y `ST_Distance` se expresan en metros. `ST_DWithin` formula el filtro espacial y el índice GiST permite evitar una comparación exhaustiva cuando el corpus crece. Las ubicaciones (`locations`) son una entidad propia: varios dispositivos pueden compartir aula y un dispositivo lejano (`AMB-005`) sirve para demostrar que el filtro de proximidad realmente excluye.
 
 ### Variación segura
 
-Copiá el `SELECT` y reducí el radio de `30` a `10`: sólo debe quedar `AIR-002`.
+Copiá el primer `SELECT` y reducí el radio de `30` a `10`: sólo debe quedar `AIR-002`. Para la consulta de 2 km, reducí el radio a `100`: seguís obteniendo los tres dispositivos cercanos al Aula 204.
 
 ### Recuperación
 
@@ -228,7 +237,7 @@ docker compose --env-file .env -f compose.yaml run --rm loader
 docker compose --env-file .env -f compose.yaml run --rm loader
 ```
 
-El loader genera un PDF real de dos páginas desde la fuente versionada, lo sube a `s3://ceiot-manuales/manuales/air-quality-pro/v1/manual.pdf`, verifica `HEAD`, descarga con `GET`, compara los bytes y recién entonces marca el documento como disponible.
+El loader genera un PDF real de dos páginas desde la fuente versionada, lo sube a `s3://ceiot-manuales/manuales/env-x/v1/manual_ENV_X.pdf`, verifica `HEAD`, descarga con `GET`, compara los bytes y recién entonces marca el documento como disponible.
 
 ### Comando nativo de verificación
 
@@ -247,7 +256,7 @@ client = boto3.client(
     config=Config(signature_version=UNSIGNED),
 )
 bucket = os.environ["MANUAL_BUCKET"]
-key = "manuales/air-quality-pro/v1/manual.pdf"
+key = "manuales/env-x/v1/manual_ENV_X.pdf"
 head = client.head_object(Bucket=bucket, Key=key)
 response = client.get_object(Bucket=bucket, Key=key)
 try:
@@ -296,7 +305,7 @@ Se indexan exactamente cuatro chunks:
 | Página | Sección |
 | --- | --- |
 | 1 | Preparación y condiciones |
-| 1 | Ajuste de referencia |
+| 1 | Recalibración tras reemplazo de batería |
 | 2 | Comprobación |
 | 2 | Recuperación segura |
 
@@ -320,7 +329,7 @@ Si la descarga inicial se interrumpió, comprobá conectividad y espacio de Dock
 
 ```bash
 docker compose --env-file .env -f compose.yaml run --rm --entrypoint python loader -m loader.query_vectors \
-  --question '¿Qué debo hacer si el CO2 está desviado?' \
+  --question '¿Cómo debe recalibrarse el sensor ENV-X después de reemplazar la batería?' \
   --top-k 3
 ```
 
@@ -348,24 +357,24 @@ Las consultas no escriben. Si no hay chunks, ejecutá primero el loader y luego 
 
 ## 7. RAG — responder desde el manual
 
-### Comando observado en vivo
+### Comando sugerido
 
-Ésta es la solicitud exacta del smoke pago observado; no extrapoles el resultado a otra redacción ni a otro `top_k`:
+Esta es la pregunta de la filmina de la Clase 6; no fue re-verificada en vivo contra OpenRouter después de esta alineación (no se hacen llamadas pagas como parte de esta tarea), por lo que no extrapoles una redacción de respuesta exacta:
 
 ```bash
 curl --fail-with-body http://127.0.0.1:8006/api/query \
   -H 'Content-Type: application/json' \
   -d '{
     "mode": "rag",
-    "question": "¿Qué hago si la comprobación del sensor falla después del ajuste de referencia?",
+    "question": "¿Cómo debe recalibrarse el sensor ENV-X después de reemplazar la batería?",
     "top_k": 2,
-    "document_id": "air-quality-pro-manual"
+    "document_id": "env-x-manual"
   }'
 ```
 
 ### Observable esperado
 
-La ejecución en vivo acotada devolvió `200`, dos fuentes del manual —**página 1, Ajuste de referencia**, y **página 2, Recuperación segura**— y una traza que terminó en `openrouter-rag`. La redacción puede cambiar: los invariantes a revisar son las fuentes con versión/página/sección/objeto y que las afirmaciones estén respaldadas por sus extractos. No se probó en vivo otra pregunta RAG como parte de ese smoke.
+El invariante verificado (por los tests automatizados con un cliente OpenRouter simulado, ver `tests/test_retrieval.py` y `tests/test_web_app.py`) es que la recuperación semántica encuentra **página 1, sección "Recalibración tras reemplazo de batería"** como fragmento más cercano y que la respuesta cita página y sección de ese fragmento. Una ejecución en vivo real depende del modelo configurado y de su redacción, que no está prometida.
 
 ### Interpretación
 
@@ -382,7 +391,7 @@ curl --fail-with-body http://127.0.0.1:8006/api/query \
     "mode": "rag",
     "question": "¿Cuál es el precio de una bicicleta y cómo estará el clima mañana?",
     "top_k": 4,
-    "document_id": "air-quality-pro-manual"
+    "document_id": "env-x-manual"
   }'
 ```
 
@@ -468,13 +477,13 @@ curl --fail-with-body http://127.0.0.1:8006/api/query \
     "mode": "integrated",
     "question": "¿Cuál fue el promedio de CO2 de AIR-002 el 12 de mayo de 2025 y cómo reinicio de forma segura si falla la comprobación?",
     "top_k": 4,
-    "document_id": "air-quality-pro-manual"
+    "document_id": "env-x-manual"
   }'
 ```
 
 ### Observable esperado
 
-El smoke en vivo devolvió `200`, promedio cercano a `805.6667`, SQL validado con `'co2'`, cuatro fuentes de `air-quality-pro-manual` —incluida **Recuperación segura**— y una respuesta que indicó reiniciar desde las condiciones iniciales y conservar el historial en PostgreSQL. El `document_id` fija esa proveniencia aunque existan cargas posteriores. La traza hace visibles generación SQL, validación, rol, E5, pgvector y síntesis. Esos SQL, filas, fuentes y pasos son invariantes verificables; la prosa no está prometida.
+El smoke en vivo devolvió `200`, promedio cercano a `805.6667`, SQL validado con `'co2'`, cuatro fuentes de `env-x-manual` —incluida **Recuperación segura**— y una respuesta que indicó reiniciar desde las condiciones iniciales y conservar el historial en PostgreSQL. El `document_id` fija esa proveniencia aunque existan cargas posteriores. La traza hace visibles generación SQL, validación, rol, E5, pgvector y síntesis. Esos SQL, filas, fuentes y pasos son invariantes verificables; la prosa no está prometida.
 
 ### Interpretación
 
@@ -712,9 +721,9 @@ docker compose --env-file .env -f compose.yaml up -d --build --wait
 ## Lista de comprobación
 
 - [ ] El entorno se creó sin sobrescribir `.env` y los cuatro puertos locales están disponibles.
-- [ ] PostgreSQL tiene tres extensiones, tres dispositivos, ocho mediciones y una hypertable.
-- [ ] Los promedios por minuto son `802.5` y `812.0`.
-- [ ] PostGIS devuelve `AIR-002` a 0 m y `AMB-001` a ~20 m con índice GiST.
+- [ ] PostgreSQL tiene tres extensiones, tres ubicaciones, cuatro dispositivos, ocho mediciones fijas del 2025-05-12 y una hypertable.
+- [ ] Los promedios por minuto son `802.5` y `812.0`; el promedio de temperatura del Aula 204 en las últimas 24 horas siempre devuelve una fila.
+- [ ] PostGIS devuelve `AIR-002` a 0 m y `AMB-001` a ~20 m con índice GiST; a 2 km del Aula 204 aparecen los tres dispositivos cercanos y `AMB-005` queda excluido.
 - [ ] Redis muestra la proyección con TTL de hasta 3600 s y elimina la clave descartable de 20 s.
 - [ ] SeaweedFS conserva el PDF inicial y cada original cargado con bucket, clave, metadatos y hash coincidentes.
 - [ ] La aplicación pública sigue limitada a `ai_readonly`/`rag_readonly`; el `uploader` interno usa sólo `rag_ingest`, sin OpenRouter ni rol propietario, con 2 GiB, 2 CPU y 256 procesos.

@@ -98,9 +98,9 @@
       <details>
         <summary>Ejemplos opcionales</summary>
         <div class="examples">
-          <button class="example" type="button" data-mode="rag" data-manual-seed="true" data-question="¿Cómo preparo AIR-002 para calibrarlo?">Documentos (manual inicial) · ¿Cómo preparo AIR-002 para calibrarlo?</button>
-          <button class="example" type="button" data-mode="text-to-sql" data-question="¿Cuál fue el promedio de CO2 de AIR-002 el 12 de mayo de 2025?">Telemetría · ¿Cuál fue el promedio de CO2 de AIR-002 el 12 de mayo de 2025?</button>
-          <button class="example" type="button" data-mode="integrated" data-manual-seed="true" data-question="¿Cuál fue el promedio de CO2 de AIR-002 el 12 de mayo de 2025 y cómo reinicio de forma segura si falla la comprobación?">Integrado (mediciones y manual inicial) · ¿Cuál fue el promedio de CO2 de AIR-002 el 12 de mayo de 2025 y cómo reinicio de forma segura si falla la comprobación?</button>
+          <button class="example" type="button" data-mode="rag" data-manual-seed="true" data-question="¿Cómo debe recalibrarse el sensor ENV-X después de reemplazar la batería?">Documentos (manual inicial) · ¿Cómo debe recalibrarse el sensor ENV-X después de reemplazar la batería?</button>
+          <button class="example" type="button" data-mode="text-to-sql" data-question="¿Cuál fue la temperatura promedio del Aula 204 durante las últimas 24 horas?">Telemetría · ¿Cuál fue la temperatura promedio del Aula 204 durante las últimas 24 horas?</button>
+          <button class="example" type="button" data-mode="integrated" data-manual-seed="true" data-question="El sensor ENV-X del Aula 204 presenta mediciones anómalas. ¿Cuáles fueron sus valores promedio durante las últimas 24 horas y qué procedimiento de calibración indica su manual?">Integrado (mediciones y manual inicial) · El sensor ENV-X del Aula 204 presenta mediciones anómalas. ¿Cuáles fueron sus valores promedio durante las últimas 24 horas y qué procedimiento de calibración indica su manual?</button>
         </div>
       </details>
       <label for="top-k">Cantidad máxima de fragmentos (1–4)
@@ -133,7 +133,7 @@
 </main>
 <script>
   const MAX_PDF_BYTES = 10485760;
-  const MANUAL_SEED_DOCUMENT_ID = "air-quality-pro-manual";
+  const MANUAL_SEED_DOCUMENT_ID = "env-x-manual";
   const MODE_GUIDES = {
     rag: 'Busca con E5 local en el manual o PDF seleccionado (o en todos) y muestra la fuente con página, fragmento y distancia. OpenRouter sintetiza la respuesta sólo si encuentra fragmentos.',
     'text-to-sql': 'OpenRouter genera una consulta SQL; el guard de seguridad la valida y la ejecuta sobre las vistas lab_read con un rol de sólo lectura. Muestra el SQL validado y las filas. Este modo ignora los PDF, el documento elegido y la cantidad de fragmentos.',

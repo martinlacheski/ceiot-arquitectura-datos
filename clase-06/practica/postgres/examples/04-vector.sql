@@ -5,9 +5,9 @@
 WITH query_embedding AS (
     SELECT embedding
     FROM manual_chunks
-    WHERE document_id = 'air-quality-pro-manual'
+    WHERE document_id = 'env-x-manual'
       AND version = 1
-      AND section = 'Ajuste de referencia'
+      AND section = 'Recalibración tras reemplazo de batería'
 )
 SELECT
     chunk.document_id,
@@ -33,6 +33,6 @@ SELECT
     object_key,
     content
 FROM manual_chunks
-WHERE content ILIKE '%¿Qué debo hacer si el CO2 está desviado?%'
+WHERE content ILIKE '%¿Cómo debo recalibrar el sensor después de cambiar la batería?%'
 ORDER BY document_id, version, chunk_index
 LIMIT 4;

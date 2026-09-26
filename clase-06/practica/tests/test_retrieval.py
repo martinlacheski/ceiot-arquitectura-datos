@@ -16,18 +16,18 @@ from shared.retrieval import MAX_COSINE_DISTANCE, nearest_manual_chunks  # type:
 
 
 PAGE_TEXTS = [
-    """Manual de calibración AirQuality-Pro
-Documento air-quality-pro-manual · versión 1
+    """Manual de calibración ENV-X
+Documento env-x-manual · versión 1
 Preparación y condiciones
 Ubicá el equipo sobre una mesa estable y mantené condiciones ambientales controladas durante quince minutos completos.
-Ajuste de referencia
-Conectá el patrón de referencia y aplicá un único ajuste cuando la diferencia de CO2 supere el límite.
+Recalibración tras reemplazo de batería
+Esperá cinco minutos antes de energizar el equipo y aplicá el offset del menú CAL cuando la diferencia supere el límite.
 Proveniencia: manual-content.json · versión 1 · página 1/2
 """,
-    """Manual de calibración AirQuality-Pro
-Documento air-quality-pro-manual · versión 1
+    """Manual de calibración ENV-X
+Documento env-x-manual · versión 1
 Comprobación
-Retirá el patrón y confirmá que tres lecturas consecutivas permanezcan cercanas antes de aceptar la calibración.
+Retirá la sonda y confirmá que tres lecturas consecutivas permanezcan cercanas antes de aceptar la calibración.
 Recuperación segura
 Si falla la comprobación reiniciá desde las condiciones iniciales y conservá el historial en PostgreSQL siempre.
 Proveniencia: manual-content.json · versión 1 · página 2/2
@@ -38,9 +38,9 @@ Proveniencia: manual-content.json · versión 1 · página 2/2
 def test_chunking_preserves_four_section_provenance_records() -> None:
     chunks = chunks_from_page_texts(
         PAGE_TEXTS,
-        document_id="air-quality-pro-manual",
+        document_id="env-x-manual",
         version=1,
-        object_key="manuales/air-quality-pro/v1/manual.pdf",
+        object_key="manuales/env-x/v1/manual_ENV_X.pdf",
     )
 
     assert len(chunks) == 4
@@ -48,33 +48,36 @@ def test_chunking_preserves_four_section_provenance_records() -> None:
     assert [chunk.page for chunk in chunks] == [1, 1, 2, 2]
     assert [chunk.section for chunk in chunks] == [
         "Preparación y condiciones",
-        "Ajuste de referencia",
+        "Recalibración tras reemplazo de batería",
         "Comprobación",
         "Recuperación segura",
     ]
-    assert {chunk.document_id for chunk in chunks} == {"air-quality-pro-manual"}
+    assert {chunk.document_id for chunk in chunks} == {"env-x-manual"}
     assert {chunk.version for chunk in chunks} == {1}
     assert {chunk.object_key for chunk in chunks} == {
-        "manuales/air-quality-pro/v1/manual.pdf"
+        "manuales/env-x/v1/manual_ENV_X.pdf"
     }
     assert all("Proveniencia:" not in chunk.content for chunk in chunks)
 
 
 def test_chunking_rejects_missing_section_instead_of_inventing_content() -> None:
-    broken_pages = [PAGE_TEXTS[0].replace("Ajuste de referencia", ""), PAGE_TEXTS[1]]
+    broken_pages = [
+        PAGE_TEXTS[0].replace("Recalibración tras reemplazo de batería", ""),
+        PAGE_TEXTS[1],
+    ]
 
     with pytest.raises(ValueError, match="No se encontró la sección"):
         chunks_from_page_texts(broken_pages, "doc", 1, "manual.pdf")
 
 
 def test_s3_provenance_must_match_database_identity() -> None:
-    metadata = {"document-id": "air-quality-pro-manual", "version": "1", "pages": "2"}
-    validate_object_provenance(metadata, "air-quality-pro-manual", 1)
+    metadata = {"document-id": "env-x-manual", "version": "1", "pages": "2"}
+    validate_object_provenance(metadata, "env-x-manual", 1)
 
     with pytest.raises(ValueError, match="document_id"):
         validate_object_provenance(metadata, "otro-manual", 1)
     with pytest.raises(ValueError, match="versión"):
-        validate_object_provenance(metadata, "air-quality-pro-manual", 2)
+        validate_object_provenance(metadata, "env-x-manual", 2)
 
 
 class FakeModel:
@@ -103,7 +106,7 @@ def test_vector_literal_rejects_wrong_dimension() -> None:
 
 def test_e5_prefixes_distinguish_passages_from_queries() -> None:
     chunk = chunks_from_page_texts(
-        PAGE_TEXTS, "air-quality-pro-manual", 1, "manuales/manual.pdf"
+        PAGE_TEXTS, "env-x-manual", 1, "manuales/manual.pdf"
     )[0]
 
     assert passage_text(chunk).startswith("passage: Preparación y condiciones.")
@@ -226,4 +229,4 @@ def test_native_sql_exposes_cosine_and_literal_operators() -> None:
 
     assert "<=>" in sql
     assert "ILIKE" in sql
-    assert "desviado" in sql
+    assert "batería" in sql

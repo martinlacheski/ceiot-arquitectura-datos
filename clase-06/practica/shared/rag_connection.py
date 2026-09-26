@@ -7,7 +7,7 @@ import re
 
 from psycopg.rows import dict_row  # type: ignore[import-not-found]
 
-_DOCUMENT_ID = re.compile(r"(?:air-quality-pro-manual|upload-[0-9a-f]{24})\Z")
+_DOCUMENT_ID = re.compile(r"(?:env-x-manual|upload-[0-9a-f]{24})\Z")
 
 
 def validate_document_id(document_id: str) -> str:

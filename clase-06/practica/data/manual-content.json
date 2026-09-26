@@ -1,19 +1,19 @@
 {
   "schema_version": 1,
-  "document_id": "air-quality-pro-manual",
+  "document_id": "env-x-manual",
   "version": 1,
-  "title": "Manual de calibración AirQuality-Pro",
+  "title": "Manual de calibración ENV-X",
   "pages": [
     {
       "page": 1,
       "sections": [
         {
           "section": "Preparación y condiciones",
-          "text": "Ubicá el equipo AIR-002 en una mesa estable, lejos de ventanas y salidas de ventilación. Mantené el ambiente entre 20 y 26 °C durante quince minutos. Verificá que la entrada de aire esté libre y registrá la hora de inicio en la planilla del laboratorio."
+          "text": "Ubicá el equipo ENV-X en una mesa estable, lejos de ventanas y salidas de ventilación, dentro del Aula 204. Mantené el ambiente entre 20 y 26 °C durante quince minutos. Verificá que la entrada de aire esté libre y registrá la hora de inicio en la planilla del laboratorio."
         },
         {
-          "section": "Ajuste de referencia",
-          "text": "Conectá el patrón ficticio AQ-REF-10 y esperá cinco lecturas consecutivas. Si la diferencia de CO2 supera 25 ppm, aplicá un único ajuste desde el menú CAL. No cambies la ubicación del sensor mientras se estabiliza."
+          "section": "Recalibración tras reemplazo de batería",
+          "text": "Después de reemplazar la batería, esperá cinco minutos completos antes de energizar el equipo para permitir la estabilización del regulador interno. Conectá la sonda de referencia ficticia ENV-REF-10 y esperá cinco lecturas consecutivas. Aplicá el offset de temperatura indicado en el menú CAL si la diferencia supera 0,5 °C, y el offset de humedad si la diferencia supera 3 puntos porcentuales. No cambies la ubicación del sensor mientras se estabiliza."
         }
       ]
     },
@@ -22,7 +22,7 @@
       "sections": [
         {
           "section": "Comprobación",
-          "text": "Retirá el patrón y dejá que el equipo mida aire ambiente durante dos minutos. La calibración se considera aceptable cuando tres lecturas consecutivas difieren menos de 15 ppm entre sí. Guardá el resultado junto con el identificador AIR-002."
+          "text": "Retirá la sonda de referencia y dejá que el equipo mida aire ambiente durante dos minutos. La calibración se considera aceptable cuando tres lecturas consecutivas de temperatura difieren menos de 0,3 °C entre sí. Guardá el resultado junto con el identificador ENV-X."
         },
         {
           "section": "Recuperación segura",

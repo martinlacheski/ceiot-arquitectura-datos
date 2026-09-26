@@ -115,7 +115,7 @@ def test_read_connection_is_pinned_to_rag_readonly_without_owner_fallback(
 
 @pytest.mark.parametrize(
     "document_id",
-    ["air-quality-pro-manual", DOCUMENT_ID],
+    ["env-x-manual", DOCUMENT_ID],
 )
 def test_document_id_accepts_only_seed_or_sha_derived_upload(document_id: str) -> None:
     assert validate_document_id(document_id) == document_id

@@ -400,9 +400,9 @@ def test_root_serves_accessible_static_ui_with_safe_dom_rendering() -> None:
     assert "Escribí tu propia pregunta" in html
     assert "vistas <code>lab_read</code>" in html
     assert "SQL generado pasa por el guard" in html
-    assert "¿Cómo preparo AIR-002" in html
-    assert "¿Cuál fue el promedio de CO2" in html
-    assert "cómo reinicio de forma segura si falla la comprobación" in html
+    assert "¿Cómo debe recalibrarse el sensor ENV-X" in html
+    assert "¿Cuál fue la temperatura promedio del Aula 204" in html
+    assert "El sensor ENV-X del Aula 204 presenta mediciones anómalas" in html
     assert 'id="top-k" name="top_k" type="number" min="1" max="4" value="4"' in html
     assert "fetch('/api/query'" in html
     assert ".textContent" in html

@@ -16,7 +16,7 @@ from shared.e5 import (  # type: ignore[import-not-found]
 )
 from shared.retrieval import nearest_manual_chunks  # type: ignore[import-not-found]
 
-DEFAULT_QUESTION = "¿Qué debo hacer si el CO2 está desviado?"
+DEFAULT_QUESTION = "¿Cómo debe recalibrarse el sensor ENV-X después de reemplazar la batería?"
 
 
 def semantic_search(cursor: Any, embedding: str, top_k: int) -> list[tuple[Any, ...]]:

@@ -187,12 +187,12 @@ def test_examples_choose_explicit_modes_without_submitting_or_fetching() -> None
     assert html.count('data-mode="text-to-sql"') == 1
     assert html.count('data-mode="integrated"') == 1
     assert html.count('data-manual-seed="true"') == 2
-    assert "Documentos (manual inicial) · ¿Cómo preparo AIR-002" in html
-    assert "Telemetría · ¿Cuál fue el promedio de CO2" in html
-    assert "Integrado (mediciones y manual inicial) · ¿Cuál fue el promedio" in html
+    assert "Documentos (manual inicial) · ¿Cómo debe recalibrarse el sensor ENV-X" in html
+    assert "Telemetría · ¿Cuál fue la temperatura promedio del Aula 204" in html
+    assert "Integrado (mediciones y manual inicial) · El sensor ENV-X del Aula 204" in html
     assert "topK.disabled = textToSql" in html
     assert "topK.setAttribute('aria-disabled', String(textToSql))" in html
-    assert 'const MANUAL_SEED_DOCUMENT_ID = "air-quality-pro-manual"' in html
+    assert 'const MANUAL_SEED_DOCUMENT_ID = "env-x-manual"' in html
     assert "mode.value = example.dataset.mode" in html
     assert "updateQueryModeUI(manualHint)" in html
     assert "option.value === MANUAL_SEED_DOCUMENT_ID" in html

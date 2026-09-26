@@ -1,9 +1,19 @@
 \set ON_ERROR_STOP on
 
+CREATE TABLE IF NOT EXISTS locations (
+    location_id text PRIMARY KEY,
+    name text NOT NULL,
+    building text NOT NULL,
+    position geography(Point, 4326) NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS locations_position_gix
+    ON locations USING gist (position);
+
 CREATE TABLE IF NOT EXISTS devices (
     device_id text PRIMARY KEY,
     model text NOT NULL,
-    location_id text NOT NULL,
+    location_id text NOT NULL REFERENCES locations (location_id),
     position geography(Point, 4326) NOT NULL,
     depends_on_device_id text REFERENCES devices (device_id)
 );

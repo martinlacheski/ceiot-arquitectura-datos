@@ -21,11 +21,11 @@ from shared.e5 import (  # type: ignore[import-not-found]
     vector_literal,
 )
 
-SEED_DOCUMENT_ID = "air-quality-pro-manual"
+SEED_DOCUMENT_ID = "env-x-manual"
 
 EXPECTED_SECTIONS = (
     (1, "Preparación y condiciones"),
-    (1, "Ajuste de referencia"),
+    (1, "Recalibración tras reemplazo de batería"),
     (2, "Comprobación"),
     (2, "Recuperación segura"),
 )
