@@ -1,0 +1,224 @@
+name: ceiot-clase-06
+
+services:
+  postgres:
+    image: timescale/timescaledb-ha:pg17.11-ts2.30.1
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-ceiot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ceiot_local_only}
+      POSTGRES_DB: ${POSTGRES_DB:-ceiot_class6}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5436}:5432"
+    volumes:
+      - postgres_data:/home/postgres/pgdata/data
+      - ./postgres/init/01-extensions.sql:/docker-entrypoint-initdb.d/01-extensions.sql:ro
+      - ./postgres/init/02-schema.sql:/docker-entrypoint-initdb.d/02-schema.sql:ro
+      - ./postgres/init/03-vector.sql:/docker-entrypoint-initdb.d/03-vector.sql:ro
+      - ./postgres/init/04-ai-views.sql:/docker-entrypoint-initdb.d/04-ai-views.sql:ro
+      - ./postgres/init/05-document-upload.sql:/docker-entrypoint-initdb.d/05-document-upload.sql:ro
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}" &&
+          psql -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}" -tAc
+          "SELECT count(*) = 3 FROM pg_extension
+          WHERE extname IN ('timescaledb', 'postgis', 'vector')"
+          | grep -qx t
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    restart: unless-stopped
+
+  redis:
+    image: redis:7.4.2-alpine
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-ceiot_redis_local_only}
+    command:
+      - sh
+      - -c
+      - exec redis-server --appendonly yes --requirepass "$${REDIS_PASSWORD}"
+    ports:
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - REDISCLI_AUTH="$${REDIS_PASSWORD}" redis-cli ping | grep -qx PONG
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  loader:
+    image: ceiot-clase-06-python:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+    profiles:
+      - tools
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: ${POSTGRES_USER:-ceiot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ceiot_local_only}
+      POSTGRES_DB: ${POSTGRES_DB:-ceiot_class6}
+      # Credencial fija sólo para esta demo local.
+      # No reutilizar en producción.
+      AI_POSTGRES_USER: ai_readonly
+      AI_POSTGRES_PASSWORD: ceiot_ai_readonly_local_only
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-ceiot_redis_local_only}
+      SEAWEEDFS_S3_ENDPOINT: http://seaweedfs:8333
+      MANUAL_BUCKET: ceiot-manuales
+      MODELO_EMBEDDING: intfloat/multilingual-e5-small
+      HF_HOME: /models/huggingface
+    volumes:
+      - ./data/manual-content.json:/data/manual-content.json:ro
+      - ./compose.yaml:/app/compose.yaml:ro
+      - ./tests:/app/tests:ro
+      - ./postgres/examples:/app/postgres/examples:ro
+      - embedding_model_cache:/models/huggingface
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      seaweedfs:
+        condition: service_healthy
+    restart: "no"
+
+  uploader:
+    image: ceiot-clase-06-python:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+    entrypoint:
+      - uvicorn
+    command:
+      - loader.upload_api:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8007"
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: ${POSTGRES_DB:-ceiot_class6}
+      # Credencial fija sólo para esta demo local.
+      # No reutilizar en producción.
+      RAG_INGEST_POSTGRES_PASSWORD: ceiot_rag_ingest_demo_only
+      SEAWEEDFS_S3_ENDPOINT: http://seaweedfs:8333
+      MANUAL_BUCKET: ceiot-manuales
+      MODELO_EMBEDDING: intfloat/multilingual-e5-small
+      HF_HOME: /models/huggingface
+    volumes:
+      - embedding_model_cache:/models/huggingface
+    expose:
+      - "8007"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      seaweedfs:
+        condition: service_healthy
+    mem_limit: 2g
+    cpus: "2.0"
+    pids_limit: 256
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request as u;
+          u.urlopen('http://127.0.0.1:8007/health', timeout=2).read()
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    restart: unless-stopped
+
+  app:
+    image: ceiot-clase-06-python:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+    entrypoint:
+      - uvicorn
+    command:
+      - api.web_app:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8006"
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: ${POSTGRES_DB:-ceiot_class6}
+      RAG_POSTGRES_USER: rag_readonly
+      RAG_POSTGRES_PASSWORD: ceiot_rag_readonly_demo_only
+      AI_POSTGRES_USER: ai_readonly
+      AI_POSTGRES_PASSWORD: ceiot_ai_readonly_local_only
+      MODELO_EMBEDDING: intfloat/multilingual-e5-small
+      HF_HOME: /models/huggingface
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-openai/gpt-4o-mini}
+    volumes:
+      - embedding_model_cache:/models/huggingface
+    ports:
+      - "127.0.0.1:8006:8006"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      uploader:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request as u;
+          u.urlopen('http://127.0.0.1:8006/health', timeout=2).read()
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    restart: unless-stopped
+
+  seaweedfs:
+    image: chrislusf/seaweedfs:3.80
+    # Laboratorio local de un solo nodo: sin TLS, alta disponibilidad ni
+    # autenticación S3. No exponer este puerto fuera de 127.0.0.1 ni usarlo
+    # como configuración de producción.
+    command:
+      - server
+      - -dir=/data
+      - -ip=seaweedfs
+      - -ip.bind=0.0.0.0
+      - -master.port=9333
+      - -volume.port=8080
+      - -s3
+      - -s3.port=8333
+    ports:
+      - "127.0.0.1:${SEAWEEDFS_S3_PORT:-18333}:8333"
+    volumes:
+      - seaweedfs_data:/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - wget -q -O /dev/null http://127.0.0.1:9333/cluster/status
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+  seaweedfs_data:
+  embedding_model_cache:

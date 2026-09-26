@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "document_id": "air-quality-pro-manual",
+  "version": 1,
+  "title": "Manual de calibración AirQuality-Pro",
+  "pages": [
+    {
+      "page": 1,
+      "sections": [
+        {
+          "section": "Preparación y condiciones",
+          "text": "Ubicá el equipo AIR-002 en una mesa estable, lejos de ventanas y salidas de ventilación. Mantené el ambiente entre 20 y 26 °C durante quince minutos. Verificá que la entrada de aire esté libre y registrá la hora de inicio en la planilla del laboratorio."
+        },
+        {
+          "section": "Ajuste de referencia",
+          "text": "Conectá el patrón ficticio AQ-REF-10 y esperá cinco lecturas consecutivas. Si la diferencia de CO2 supera 25 ppm, aplicá un único ajuste desde el menú CAL. No cambies la ubicación del sensor mientras se estabiliza."
+        }
+      ]
+    },
+    {
+      "page": 2,
+      "sections": [
+        {
+          "section": "Comprobación",
+          "text": "Retirá el patrón y dejá que el equipo mida aire ambiente durante dos minutos. La calibración se considera aceptable cuando tres lecturas consecutivas difieren menos de 15 ppm entre sí. Guardá el resultado junto con el identificador AIR-002."
+        },
+        {
+          "section": "Recuperación segura",
+          "text": "Si la comprobación falla, no inventes un valor ni repitas ajustes sucesivos. Reiniciá el procedimiento desde las condiciones iniciales y conservá el historial de mediciones en PostgreSQL. El estado de Redis es una copia temporal para consulta rápida, no la fuente de verdad."
+        }
+      ]
+    }
+  ]
+}
