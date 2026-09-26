@@ -78,6 +78,78 @@ def test_rejects_adversarial_or_unbounded_sql(sql: str, reason: str) -> None:
         validate_sql(sql)
 
 
+RELATIVE_TIME_QUERY = """
+SELECT device_id
+FROM lab_read.measurements
+WHERE location_id = 'AULA-204'
+  AND variable = 'temperature'
+  AND measured_at >= now() - INTERVAL '24 hours'
+LIMIT 10
+"""
+
+
+def test_accepts_relative_time_predicate_and_locations_view() -> None:
+    validated = validate_sql(RELATIVE_TIME_QUERY)
+
+    assert validated.view == "measurements"
+    assert "CURRENT_TIMESTAMP" in validated.sql
+    assert "INTERVAL '24 HOURS'" in validated.sql
+
+    locations_query = (
+        "SELECT location_id, name, building FROM lab_read.locations LIMIT 5"
+    )
+    validated_locations = validate_sql(locations_query)
+    assert validated_locations.view == "locations"
+
+    result = execute_validated_sql(validated_locations)
+    assert result.columns == ("location_id", "name", "building")
+    assert len(result.rows) >= 1
+
+
+@pytest.mark.parametrize(
+    ("sql", "reason"),
+    [
+        (
+            "SELECT device_id FROM lab_read.measurements "
+            "WHERE measured_at >= now() - interval (SELECT '24 hours') LIMIT 1",
+            "subconsultas",
+        ),
+        (
+            "SELECT device_id FROM lab_read.measurements "
+            "WHERE measured_at >= now() - interval '24 hours' + pg_sleep(1) LIMIT 1",
+            "no está permitida",
+        ),
+        (
+            "SELECT device_id FROM lab_read.measurements "
+            "WHERE measured_at >= now() - make_interval(hours => 1) LIMIT 1",
+            "no está permitida",
+        ),
+        (
+            "SELECT device_id FROM lab_read.measurements "
+            "WHERE measured_at >= now() - (variable || ' hours')::interval LIMIT 1",
+            "no está permitida",
+        ),
+        (
+            "SELECT device_id FROM lab_read.measurements "
+            "WHERE measured_at >= now() - interval '24 weeks' LIMIT 1",
+            "hours, days o minutes",
+        ),
+        (
+            "SELECT device_id FROM lab_read.measurements "
+            "WHERE measured_at >= now() - interval '99999 hours' LIMIT 1",
+            "entero de hasta 3 dígitos",
+        ),
+        (
+            "SELECT now() FROM lab_read.devices LIMIT 1",
+            "now\\(\\) sólo se permite",
+        ),
+    ],
+)
+def test_rejects_hostile_relative_time_expressions(sql: str, reason: str) -> None:
+    with pytest.raises(SQLRejected, match=reason):
+        validate_sql(sql)
+
+
 def test_rejects_unknown_functions_comments_joins_and_unexposed_columns() -> None:
     rejected = [
         "SELECT set_config('search_path', 'public', false) "

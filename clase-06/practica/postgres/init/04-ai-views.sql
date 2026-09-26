@@ -10,17 +10,21 @@ REVOKE ALL ON SCHEMA lab_read FROM PUBLIC;
 -- esquema de aplicación ni permitir crear objetos que alteren el search_path.
 REVOKE USAGE, CREATE ON SCHEMA public FROM PUBLIC;
 
+-- location_id se agrega al final: CREATE OR REPLACE VIEW no puede reordenar
+-- columnas existentes, sólo puede anexar nuevas al final de la lista.
 CREATE OR REPLACE VIEW lab_read.measurements
 WITH (security_barrier = true)
 AS
 SELECT
-    device_id,
-    measured_at,
-    variable,
-    value,
-    unit,
-    quality
-FROM public.measurements;
+    measurement.device_id,
+    measurement.measured_at,
+    measurement.variable,
+    measurement.value,
+    measurement.unit,
+    measurement.quality,
+    device.location_id
+FROM public.measurements AS measurement
+JOIN public.devices AS device ON device.device_id = measurement.device_id;
 
 CREATE OR REPLACE VIEW lab_read.devices
 WITH (security_barrier = true)
@@ -32,7 +36,16 @@ SELECT
     depends_on_device_id
 FROM public.devices;
 
-REVOKE ALL ON lab_read.measurements, lab_read.devices FROM PUBLIC;
+CREATE OR REPLACE VIEW lab_read.locations
+WITH (security_barrier = true)
+AS
+SELECT
+    location_id,
+    name,
+    building
+FROM public.locations;
+
+REVOKE ALL ON lab_read.measurements, lab_read.devices, lab_read.locations FROM PUBLIC;
 
 DO $role$
 BEGIN
@@ -104,7 +117,7 @@ REVOKE ALL ON ALL TABLES IN SCHEMA public FROM ai_readonly;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public
     REVOKE ALL ON TABLES FROM ai_readonly;
 GRANT USAGE ON SCHEMA lab_read TO ai_readonly;
-GRANT SELECT ON lab_read.measurements, lab_read.devices TO ai_readonly;
+GRANT SELECT ON lab_read.measurements, lab_read.devices, lab_read.locations TO ai_readonly;
 
 REVOKE ALL ON SCHEMA lab_read FROM rag_readonly;
 REVOKE ALL ON SCHEMA public FROM rag_readonly;

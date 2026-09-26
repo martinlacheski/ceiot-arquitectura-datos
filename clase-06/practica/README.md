@@ -410,22 +410,23 @@ curl --fail-with-body http://127.0.0.1:8006/api/query \
   -H 'Content-Type: application/json' \
   -d '{
     "mode": "text-to-sql",
-    "question": "¿Cuál fue el promedio de CO2 de AIR-002 el 12 de mayo de 2025?",
+    "question": "¿Cuál fue la temperatura promedio del Aula 204 durante las últimas 24 horas?",
     "top_k": 4
   }'
 ```
 
 ### Observable esperado
 
-La ejecución en vivo acotada devolvió aproximadamente `805.6667`, mostró un único `SELECT` validado sobre `lab_read.measurements`, usó el literal exacto y sensible a mayúsculas **`'co2'`**, y dejó `ai_readonly` en la traza. Revisá el SQL y la fila; no esperes una redacción idéntica.
+El invariante verificado por los tests (con un cliente OpenRouter simulado) es un único `SELECT` validado sobre `lab_read.measurements` filtrando `location_id = 'AULA-204'` y `measured_at >= now() - INTERVAL '24 hours'`, ejecutado como `ai_readonly`. Cuando la consulta devuelve filas con datos, el flujo hace una segunda llamada a OpenRouter para redactar la respuesta en lenguaje natural (por ejemplo "La temperatura promedio fue de 24,7 °C") **usando únicamente esas filas**; ese paso se ve en la traza como `openrouter-respuesta`. Sin datos útiles, la respuesta es el mensaje determinista de siempre y no hay segunda llamada. Esto no fue re-verificado con una llamada real al proveedor como parte de esta tarea (no se hacen llamadas pagas); revisá siempre el SQL y las filas, no sólo la prosa.
 
 ### Frontera de seguridad
 
 Antes de ejecutar, SQLGlot exige:
 
 - exactamente un `SELECT` directo;
-- una sola vista: `lab_read.measurements` o `lab_read.devices`;
+- una sola vista: `lab_read.measurements`, `lab_read.devices` o `lab_read.locations`;
 - sin `JOIN`, CTE, subconsultas, comentarios, catálogos ni funciones ajenas a `AVG`, `COUNT`, `MIN`, `MAX` y `SUM`;
+- una única forma de tiempo relativo, `now() - INTERVAL '<n> hours|days|minutes'`, con el literal del intervalo como un entero de hasta 3 dígitos; ninguna otra combinación de `now()`, `INTERVAL` u otras funciones de fecha;
 - `LIMIT` literal entre `1` y `50`;
 - columnas expuestas por la vista.
 
@@ -433,7 +434,7 @@ Después vuelve a validar y ejecuta con el rol separado `ai_readonly`, `BEGIN RE
 
 ### Variación segura
 
-Preguntá por `temperature` o por un conteo. Si el modelo usa `CO2` en vez de `co2`, produce SQL fuera del período o no devuelve datos útiles, la UI conserva SQL y filas para que puedas diagnosticarlo; no transforma una ausencia en un éxito.
+Preguntá por `temperature` o por un conteo, o por otra ubicación (`LAB-101`). Si el modelo usa `CO2` en vez de `co2`, produce SQL fuera del período o no devuelve datos útiles, la UI conserva SQL y filas para que puedas diagnosticarlo; no transforma una ausencia en un éxito.
 
 También podés comprobar el guard sin conectarte a PostgreSQL ni ejecutar una escritura:
 

@@ -148,7 +148,7 @@ def test_rag_selected_document_without_evidence_does_not_broaden_or_call_ai(
 def test_text_to_sql_validates_then_executes_with_ui_friendly_result(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    chat = FakeChat(VALID_SQL)
+    chat = FakeChat(VALID_SQL, "El promedio de CO2 fue 805,67 ppm.")
     observed: list[str] = []
 
     def execute(validated: Any) -> QueryResult:
@@ -162,7 +162,9 @@ def test_text_to_sql_validates_then_executes_with_ui_friendly_result(
     assert response["sql"].startswith("SELECT AVG(value)")
     assert response["rows"] == [{"average_co2": 805.67}]
     assert response["sources"][0]["type"] == "telemetry"
-    assert "validada y ejecutada" in response["answer"]
+    assert response["answer"] == "El promedio de CO2 fue 805,67 ppm."
+    assert "openrouter-respuesta" in response["trace"]
+    assert len(chat.calls) == 2
 
     system_prompt = chat.calls[0][0][0]["content"]
     for exact_value in (
@@ -172,13 +174,20 @@ def test_text_to_sql_validates_then_executes_with_ui_friendly_result(
         "GOOD",
         "AIR-002",
         "AMB-001",
+        "location_id",
+        "AULA-204",
         "variable = 'co2'",
+        "now() - INTERVAL",
         "2025-05-12T00:00:00Z",
         "2025-05-13T00:00:00Z",
     ):
         assert exact_value in system_prompt
     assert "case-sensitive" in system_prompt
     assert "nunca conviertas co2 a CO2" in system_prompt
+
+    answer_prompt = chat.calls[1][0][0]["content"]
+    assert "evidencia no confiable" in answer_prompt
+    assert "FILAS" in chat.calls[1][0][1]["content"]
 
 
 def test_text_to_sql_reports_null_average_as_no_data_and_keeps_evidence(
@@ -199,6 +208,8 @@ def test_text_to_sql_reports_null_average_as_no_data_and_keeps_evidence(
     assert "sin datos" in response["answer"].lower()
     assert "revisá los filtros y las mayúsculas" in response["answer"].lower()
     assert "validada y ejecutada" not in response["answer"]
+    assert len(chat.calls) == 1
+    assert "openrouter-respuesta" not in response["trace"]
 
 
 def test_integrated_returns_telemetry_and_manual_sources_without_claiming_citation(

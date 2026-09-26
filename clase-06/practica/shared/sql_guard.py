@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from typing import Never
 
@@ -19,6 +20,7 @@ ALLOWED_VIEWS = {
         "value",
         "unit",
         "quality",
+        "location_id",
     },
     "devices": {
         "device_id",
@@ -26,7 +28,16 @@ ALLOWED_VIEWS = {
         "location_id",
         "depends_on_device_id",
     },
+    "locations": {
+        "location_id",
+        "name",
+        "building",
+    },
 }
+# Únicas unidades de tiempo relativo admitidas junto a now(). El literal del
+# INTERVAL debe ser un entero de hasta 3 dígitos (sin signo, sin expresiones).
+ALLOWED_INTERVAL_UNITS = {"HOUR", "HOURS", "DAY", "DAYS", "MINUTE", "MINUTES"}
+_INTERVAL_VALUE_PATTERN = re.compile(r"^[0-9]{1,3}$")
 ALLOWED_FUNCTIONS = (exp.Avg, exp.Count, exp.Min, exp.Max, exp.Sum)
 ALLOWED_NODES = (
     exp.Select,
@@ -63,6 +74,9 @@ ALLOWED_NODES = (
     exp.Sub,
     exp.Mul,
     exp.Div,
+    exp.CurrentTimestamp,
+    exp.Interval,
+    exp.Var,
     *ALLOWED_FUNCTIONS,
 )
 ALLOWED_SELECT_ARGUMENTS = {
@@ -120,6 +134,54 @@ def _validate_limit(statement: exp.Select, sql: str) -> int:
     return parsed
 
 
+def _validate_relative_time_usage(statement: exp.Select, sql: str) -> None:
+    """Restringe now()/INTERVAL a la única forma ``now() - INTERVAL '<n> unidad'``.
+
+    ``ALLOWED_NODES`` ya deja pasar ``CurrentTimestamp``, ``Interval`` y ``Var``
+    de forma genérica; esta función exige además que cada aparición tenga
+    exactamente esa forma, sin subexpresiones, columnas ni funciones anidadas.
+    """
+
+    for node in statement.walk():
+        if isinstance(node, exp.CurrentTimestamp):
+            parent = node.parent
+            if not (isinstance(parent, exp.Sub) and parent.this is node):
+                _reject(
+                    "now() sólo se permite como now() - INTERVAL "
+                    "'<n> hours|days|minutes'",
+                    sql,
+                )
+        elif isinstance(node, exp.Interval):
+            parent = node.parent
+            if not (
+                isinstance(parent, exp.Sub)
+                and parent.expression is node
+                and isinstance(parent.this, exp.CurrentTimestamp)
+            ):
+                _reject(
+                    "INTERVAL sólo se permite restando de now() "
+                    "(now() - INTERVAL '<n> hours|days|minutes')",
+                    sql,
+                )
+            value = node.this
+            if (
+                not isinstance(value, exp.Literal)
+                or not value.is_string
+                or not _INTERVAL_VALUE_PATTERN.fullmatch(value.this)
+            ):
+                _reject(
+                    "el literal de INTERVAL debe ser un entero de hasta 3 dígitos",
+                    sql,
+                )
+            unit = node.args.get("unit")
+            if not isinstance(unit, exp.Var) or unit.this.upper() not in ALLOWED_INTERVAL_UNITS:
+                _reject("INTERVAL sólo admite hours, days o minutes", sql)
+        elif isinstance(node, exp.Var):
+            parent = node.parent
+            if not (isinstance(parent, exp.Interval) and parent.args.get("unit") is node):
+                _reject("uso de identificador no permitido", sql)
+
+
 def validate_sql(sql: str) -> ValidatedSQL:
     """Acepta sólo un SELECT directo sobre una única vista ``lab_read``.
 
@@ -172,8 +234,10 @@ def validate_sql(sql: str) -> ValidatedSQL:
             _reject(f"la construcción {type(node).__name__} no está permitida", sql)
 
     for function in statement.find_all(exp.Func):
-        if not isinstance(function, ALLOWED_FUNCTIONS):
+        if not isinstance(function, (*ALLOWED_FUNCTIONS, exp.CurrentTimestamp)):
             _reject(f"la función {function.sql_name()} no está permitida", sql)
+
+    _validate_relative_time_usage(statement, sql)
 
     view = table.name
     table_aliases = {view}
