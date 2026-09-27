@@ -20,12 +20,12 @@ VALID_SQL = (
 )
 CHUNKS = [
     {
-        "document_id": "air-quality-pro-manual",
+        "document_id": "env-x-manual",
         "version": 1,
         "page": 1,
-        "section": "Ajuste de referencia",
+        "section": "Recalibración tras reemplazo de batería",
         "chunk_index": 1,
-        "object_key": "manuales/air-quality-pro/v1/manual.pdf",
+        "object_key": "manuales/env-x/v1/manual_ENV_X.pdf",
         "content": "Aplicá un único ajuste cuando la diferencia supere el límite.",
         "cosine_distance": 0.12,
     }
@@ -212,10 +212,22 @@ def test_text_to_sql_reports_null_average_as_no_data_and_keeps_evidence(
     assert "openrouter-respuesta" not in response["trace"]
 
 
+BOTH_BRANCHES_PLAN = (
+    '{"telemetry_question": "¿Cuál es la telemetría?", '
+    '"manual_question": "¿Qué dice el manual?"}'
+)
+TELEMETRY_ONLY_PLAN = (
+    '{"telemetry_question": "¿Cuál es la telemetría?", "manual_question": null}'
+)
+MANUAL_ONLY_PLAN = (
+    '{"telemetry_question": null, "manual_question": "¿Qué dice el manual?"}'
+)
+
+
 def test_integrated_returns_telemetry_and_manual_sources_without_claiming_citation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    chat = FakeChat(VALID_SQL, "El promedio de CO2 fue 805,67 ppm.")
+    chat = FakeChat(BOTH_BRANCHES_PLAN, VALID_SQL, "El promedio de CO2 fue 805,67 ppm.")
     monkeypatch.setattr(workflows, "execute_validated_sql", lambda _: RESULT)
     monkeypatch.setattr(workflows, "retrieve_manual", lambda _q, _k: CHUNKS)
 
@@ -227,10 +239,12 @@ def test_integrated_returns_telemetry_and_manual_sources_without_claiming_citati
         "manual",
     ]
     assert response["sources"][1]["page"] == 1
-    assert response["sources"][1]["section"] == "Ajuste de referencia"
-    assert len(chat.calls) == 2
+    assert response["sources"][1]["section"] == "Recalibración tras reemplazo de batería"
+    assert response["trace"][0] == "orquestador"
+    assert "orquestador-fallback" not in response["trace"]
+    assert len(chat.calls) == 3
     assert all(call[1] <= 300 for call in chat.calls)
-    system_prompt = chat.calls[1][0][0]["content"]
+    system_prompt = chat.calls[2][0][0]["content"]
     assert "evidencia no confiable" in system_prompt
     assert "lista de fuentes no verifica" in system_prompt
     assert "Comprobación" in system_prompt
@@ -239,7 +253,7 @@ def test_integrated_returns_telemetry_and_manual_sources_without_claiming_citati
     assert "evidencia suficiente" in system_prompt
     assert "Evidencia manual citada" not in response["answer"]
     assert "página 1" not in response["answer"]
-    assert "Ajuste de referencia" not in response["answer"]
+    assert "Recalibración tras reemplazo de batería" not in response["answer"]
 
 
 def test_integrated_without_manual_skips_synthesis_and_rejects_fabricated_citations(
@@ -249,7 +263,7 @@ def test_integrated_without_manual_skips_synthesis_and_rejects_fabricated_citati
         "Según p. 99, sección secreta del documento manual-falso, "
         "el promedio fue 9999 ppm."
     )
-    chat = FakeChat(VALID_SQL, fabricated)
+    chat = FakeChat(BOTH_BRANCHES_PLAN, VALID_SQL, fabricated)
     monkeypatch.setattr(workflows, "execute_validated_sql", lambda _: RESULT)
     monkeypatch.setattr(workflows, "retrieve_manual", lambda _q, _k: [])
 
@@ -257,7 +271,7 @@ def test_integrated_without_manual_skips_synthesis_and_rejects_fabricated_citati
 
     assert response["rows"] == [{"average_co2": 805.67}]
     assert [source["type"] for source in response["sources"]] == ["telemetry"]
-    assert len(chat.calls) == 1
+    assert len(chat.calls) == 2
     assert "Sin evidencia manual" in response["answer"]
     assert "p. 99" not in response["answer"]
     assert "sección secreta" not in response["answer"]
@@ -271,7 +285,7 @@ def test_integrated_selected_document_without_evidence_keeps_only_telemetry(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     document_id = "upload-0123456789abcdef01234567"
-    chat = FakeChat(VALID_SQL, "no debe consumirse")
+    chat = FakeChat(BOTH_BRANCHES_PLAN, VALID_SQL, "no debe consumirse")
     observed: list[str] = []
     monkeypatch.setattr(workflows, "execute_validated_sql", lambda _: RESULT)
 
@@ -292,9 +306,71 @@ def test_integrated_selected_document_without_evidence_keeps_only_telemetry(
 
     assert observed == [document_id]
     assert [source["type"] for source in response["sources"]] == ["telemetry"]
-    assert len(chat.calls) == 1
+    assert len(chat.calls) == 2
     assert "sin-evidencia-manual" in response["trace"]
     assert "sin-openrouter-síntesis" in response["trace"]
+
+
+def test_integrated_orchestrator_routes_telemetry_only_without_manual_retrieval(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    chat = FakeChat(TELEMETRY_ONLY_PLAN, VALID_SQL)
+    monkeypatch.setattr(workflows, "execute_validated_sql", lambda _: RESULT)
+
+    def must_not_retrieve(*_args: Any, **_kwargs: Any) -> list[dict[str, Any]]:
+        raise AssertionError("manual retrieval must not run for a telemetry-only plan")
+
+    monkeypatch.setattr(workflows, "retrieve_manual", must_not_retrieve)
+
+    response = workflows.run_integrated(
+        "¿Cuál fue la temperatura promedio del Aula 204?", 2, client=chat  # type: ignore[arg-type]
+    )
+
+    assert response["sql"] and response["rows"] == [{"average_co2": 805.67}]
+    assert [source["type"] for source in response["sources"]] == ["telemetry"]
+    assert len(chat.calls) == 2
+    assert "sin-evidencia-manual" in response["trace"]
+    assert "modelo-e5-local" not in response["trace"]
+
+
+def test_integrated_orchestrator_routes_manual_only_without_sql_generation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    chat = FakeChat(MANUAL_ONLY_PLAN, "El manual indica recalibrar tras la batería.")
+
+    def must_not_generate_sql(*_args: Any, **_kwargs: Any) -> str:
+        raise AssertionError("SQL generation must not run for a manual-only plan")
+
+    monkeypatch.setattr(workflows, "_generate_sql", must_not_generate_sql)
+    monkeypatch.setattr(workflows, "retrieve_manual", lambda _q, _k: CHUNKS)
+
+    response = workflows.run_integrated(
+        "¿Cómo debe recalibrarse el sensor ENV-X?", 2, client=chat  # type: ignore[arg-type]
+    )
+
+    assert response["sql"] is None
+    assert response["rows"] == []
+    assert [source["type"] for source in response["sources"]] == ["manual"]
+    assert len(chat.calls) == 2
+    assert "openrouter-sql" not in response["trace"]
+    assert "openrouter-síntesis" in response["trace"]
+
+
+def test_integrated_malformed_plan_falls_back_to_running_both_branches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    chat = FakeChat("esto no es JSON", VALID_SQL, "Respuesta combinada.")
+    monkeypatch.setattr(workflows, "execute_validated_sql", lambda _: RESULT)
+    monkeypatch.setattr(workflows, "retrieve_manual", lambda _q, _k: CHUNKS)
+
+    response = workflows.run_integrated("¿Qué indica AIR-002?", 2, client=chat)  # type: ignore[arg-type]
+
+    assert "orquestador-fallback" in response["trace"]
+    assert [source["type"] for source in response["sources"]] == [
+        "telemetry",
+        "manual",
+    ]
+    assert len(chat.calls) == 3
 
 
 def test_generated_bad_sql_is_rejected_before_execution(

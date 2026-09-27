@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import psycopg  # type: ignore[import-not-found]
@@ -260,6 +261,50 @@ def run_text_to_sql(
     }
 
 
+ORCHESTRATOR_SYSTEM_PROMPT = (
+    "Analizá la pregunta del usuario y separá qué parte corresponde a "
+    "telemetría medible en PostgreSQL/TimescaleDB (mediciones, promedios, "
+    "ubicaciones) y qué parte corresponde a un procedimiento descrito en el "
+    "manual (recuperado por RAG). Respondé EXCLUSIVAMENTE con un objeto JSON "
+    'de la forma {"telemetry_question": string|null, "manual_question": '
+    'string|null}, sin texto adicional antes ni después. Usá null en la clave '
+    "que no aplique. Al menos una de las dos claves debe ser una pregunta "
+    "concreta, no null."
+)
+MAX_ORCHESTRATOR_SUBQUESTION_CHARS = 500
+
+
+def _parse_orchestrator_plan(raw: str) -> tuple[str | None, str | None] | None:
+    """Analiza el plan JSON del orquestador; ``None`` marca un plan inválido."""
+
+    text = raw.strip()
+    if text.startswith("```"):
+        lines = text.splitlines()
+        if len(lines) >= 3 and lines[-1].strip() == "```":
+            text = "\n".join(lines[1:-1]).strip()
+    try:
+        payload = json.loads(text)
+    except ValueError:
+        return None
+    if not isinstance(payload, dict) or set(payload) != {
+        "telemetry_question",
+        "manual_question",
+    }:
+        return None
+
+    telemetry_question = payload["telemetry_question"]
+    manual_question = payload["manual_question"]
+    for value in (telemetry_question, manual_question):
+        if value is not None and (
+            not isinstance(value, str)
+            or not 1 <= len(value) <= MAX_ORCHESTRATOR_SUBQUESTION_CHARS
+        ):
+            return None
+    if telemetry_question is None and manual_question is None:
+        return None
+    return telemetry_question, manual_question
+
+
 def run_integrated(
     question: str,
     top_k: int,
@@ -268,29 +313,56 @@ def run_integrated(
     client: OpenRouterClient | None = None,
 ) -> dict[str, Any]:
     chat = client or OpenRouterClient()
-    generated = _generate_sql(question, chat)
-    validated = validate_sql(generated)
-    result = _execute_sql_safely(validated)
-    if document_id is None:
-        chunks = retrieve_manual(question, top_k)
+
+    plan_raw = chat.chat(
+        [
+            {"role": "system", "content": ORCHESTRATOR_SYSTEM_PROMPT},
+            {"role": "user", "content": question},
+        ],
+        max_completion_tokens=200,
+    )
+    plan = _parse_orchestrator_plan(plan_raw)
+    trace: list[str] = ["orquestador"]
+    if plan is None:
+        telemetry_question: str | None = question
+        manual_question: str | None = question
+        trace.append("orquestador-fallback")
     else:
-        chunks = retrieve_manual(question, top_k, document_id=document_id)
-    sources = _telemetry_sources(result) + _manual_sources(chunks)
-    trace = [
-        "openrouter-sql",
-        "sqlglot-validado",
-        "ai_readonly",
-        "modelo-e5-local",
-        f"pgvector-top-{len(chunks)}",
-    ]
+        telemetry_question, manual_question = plan
+
+    validated = None
+    result = None
+    if telemetry_question is not None:
+        generated = _generate_sql(telemetry_question, chat)
+        validated = validate_sql(generated)
+        result = _execute_sql_safely(validated)
+        trace += ["openrouter-sql", "sqlglot-validado", "ai_readonly"]
+
+    chunks: list[dict[str, Any]] = []
+    if manual_question is not None:
+        if document_id is None:
+            chunks = retrieve_manual(manual_question, top_k)
+        else:
+            chunks = retrieve_manual(manual_question, top_k, document_id=document_id)
+        trace += ["modelo-e5-local", f"pgvector-top-{len(chunks)}"]
+
+    rows = list(result.rows) if result is not None else []
+    sql = validated.sql if validated is not None else None
+    sources = (
+        _telemetry_sources(result) if result is not None else []
+    ) + _manual_sources(chunks)
+
     if not chunks:
+        answer = (
+            "Consulta de telemetría validada y ejecutada. Sin evidencia manual: "
+            "ningún fragmento superó el corte aproximado."
+            if result is not None
+            else "No encontré evidencia suficiente en el manual para responder."
+        )
         return {
-            "answer": (
-                "Consulta de telemetría validada y ejecutada. Sin evidencia manual: "
-                "ningún fragmento superó el corte aproximado."
-            ),
-            "sql": validated.sql,
-            "rows": list(result.rows),
+            "answer": answer,
+            "sql": sql,
+            "rows": rows,
             "sources": sources,
             "trace": trace + [
                 "sin-evidencia-manual",
@@ -319,7 +391,7 @@ def run_integrated(
             {
                 "role": "user",
                 "content": (
-                    f"Pregunta: {question}\nTELEMETRÍA: {list(result.rows)!r}\n"
+                    f"Pregunta: {question}\nTELEMETRÍA: {rows!r}\n"
                     f"MANUAL:\n{_context(chunks)}"
                 ),
             },
@@ -328,8 +400,8 @@ def run_integrated(
     )
     return {
         "answer": answer,
-        "sql": validated.sql,
-        "rows": list(result.rows),
+        "sql": sql,
+        "rows": rows,
         "sources": sources,
         "trace": trace + ["openrouter-síntesis"],
     }

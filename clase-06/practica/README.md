@@ -457,16 +457,16 @@ La salida comienza con `Consulta rechazada:`. `validate_sql` analiza el texto y 
 
 Una consulta rechazada no se ejecuta. Reformulá la pregunta con dispositivo, variable y fecha explícitos. Nunca copies el SQL generado a una sesión con privilegios de propietario para eludir el guard.
 
-## 9. Consulta integrada — telemetría y manual sin confundir autoridades
+## 9. Consulta integrada — orquestador de telemetría y manual
 
 ### UI
 
 Podés escribir libremente tu pregunta; los ejemplos son opcionales, y la respuesta sigue limitada al manual y a las vistas `lab_read` bajo el guard SQL.
 
-Abrí [http://127.0.0.1:8006/](http://127.0.0.1:8006/), elegí **Integrado**, mantené `top_k=4` y usá este prompt observado en vivo:
+Abrí [http://127.0.0.1:8006/](http://127.0.0.1:8006/), elegí **Integrado**, mantené `top_k=4` y usá este prompt de la filmina de la Clase 6:
 
 ```text
-¿Cuál fue el promedio de CO2 de AIR-002 el 12 de mayo de 2025 y cómo reinicio de forma segura si falla la comprobación?
+El sensor ENV-X del Aula 204 presenta mediciones anómalas. ¿Cuáles fueron sus valores promedio durante las últimas 24 horas y qué procedimiento de calibración indica su manual?
 ```
 
 La misma operación por API es:
@@ -476,19 +476,29 @@ curl --fail-with-body http://127.0.0.1:8006/api/query \
   -H 'Content-Type: application/json' \
   -d '{
     "mode": "integrated",
-    "question": "¿Cuál fue el promedio de CO2 de AIR-002 el 12 de mayo de 2025 y cómo reinicio de forma segura si falla la comprobación?",
+    "question": "El sensor ENV-X del Aula 204 presenta mediciones anómalas. ¿Cuáles fueron sus valores promedio durante las últimas 24 horas y qué procedimiento de calibración indica su manual?",
     "top_k": 4,
     "document_id": "env-x-manual"
   }'
 ```
 
+### Cómo decide el orquestador
+
+Antes de tocar telemetría o el manual, una primera llamada a OpenRouter analiza la pregunta y devuelve un plan JSON estricto:
+
+```json
+{"telemetry_question": "...", "manual_question": "..."}
+```
+
+Cada clave puede ser `null` cuando esa parte no aplica, pero al menos una debe ser una pregunta concreta. El orquestador ejecuta **sólo** las ramas necesarias: la sub-pregunta de telemetría va por Text-to-SQL (generación, validación con `sqlglot` y ejecución como `ai_readonly`); la sub-pregunta del manual va por recuperación E5 + pgvector. La traza empieza con `orquestador` y, si el plan es JSON inválido, incompleto o con ambas claves en `null`, el flujo cae de forma segura a ejecutar **ambas** ramas con la pregunta original y agrega `orquestador-fallback` a la traza — nunca se pierde una pregunta por un plan malformado. La síntesis final reutiliza la misma evidencia (sólo la que efectivamente se recolectó) y las mismas reglas de seguridad de prompt que antes.
+
 ### Observable esperado
 
-El smoke en vivo devolvió `200`, promedio cercano a `805.6667`, SQL validado con `'co2'`, cuatro fuentes de `env-x-manual` —incluida **Recuperación segura**— y una respuesta que indicó reiniciar desde las condiciones iniciales y conservar el historial en PostgreSQL. El `document_id` fija esa proveniencia aunque existan cargas posteriores. La traza hace visibles generación SQL, validación, rol, E5, pgvector y síntesis. Esos SQL, filas, fuentes y pasos son invariantes verificables; la prosa no está prometida.
+El invariante verificado por los tests (con un cliente OpenRouter simulado) es: la traza siempre empieza con `orquestador`; cuando el plan separa telemetría y manual, sólo corren las ramas indicadas (por ejemplo, una pregunta puramente de manual no genera SQL, y una puramente de telemetría no recupera fragmentos); cuando falta evidencia manual, la respuesta es la misma determinista de siempre (`Sin evidencia manual...`) sin una segunda llamada de síntesis. Esto no fue re-verificado con una llamada real al proveedor como parte de esta tarea; revisá siempre SQL, filas, fuentes y traza, no sólo la prosa.
 
 ### Interpretación
 
-El flujo combina dos autoridades distintas: telemetría consultada desde PostgreSQL y procedimientos recuperados del manual versionado. Redis puede aparecer en la explicación como copia temporal, pero no aporta el promedio histórico.
+El flujo combina dos autoridades distintas: telemetría consultada desde PostgreSQL/TimescaleDB y procedimientos recuperados del manual versionado. El orquestador decide **qué mecanismo consultar para cada parte de la pregunta** y reúne los resultados antes de que un modelo redacte una única respuesta; Redis puede aparecer en la explicación como copia temporal, pero no aporta el promedio histórico.
 
 ### Variación segura: sin manual
 
@@ -496,7 +506,7 @@ Usá una pregunta de telemetría cuya parte documental quede fuera del corpus. E
 
 ### Recuperación
 
-Si falta evidencia manual para una acción, no la infieras desde la telemetría. Volvé al PDF y a los resultados pgvector; reformulá sólo cuando la información realmente exista.
+Si falta evidencia manual para una acción, no la infieras desde la telemetría. Volvé al PDF y a los resultados pgvector; reformulá sólo cuando la información realmente exista. Si el plan del orquestador es inválido, el propio flujo ya se recupera solo ejecutando ambas ramas con la pregunta original.
 
 ## 10. Carga e inspección de un PDF propio
 
@@ -667,14 +677,14 @@ Los tests inyectan respuestas simuladas de OpenRouter y prueban recuperación, S
 docker compose --env-file .env -f compose.yaml run --rm --entrypoint pytest loader -q
 ```
 
-La ejecución normal observada termina con **143 aprobados, 1 omitido opcional y 2 warnings de dependencias upstream**. El único test omitido consulta el catálogo del volumen actual en modo de sólo lectura. Para incluirlo explícitamente:
+La ejecución normal observada termina con **157 aprobados, 1 omitido opcional y 2 warnings de dependencias upstream**. El único test omitido consulta el catálogo del volumen actual en modo de sólo lectura. Para incluirlo explícitamente:
 
 ```bash
 docker compose --env-file .env -f compose.yaml run --rm \
   -e RUN_LIVE_SEED_CATALOG_CHECK=1 --entrypoint pytest loader -q
 ```
 
-La ejecución opt-in observada termina con **144 aprobados** y los mismos 2 warnings upstream. El éxito demuestra las fronteras programadas, no la calidad universal de un modelo remoto. No se verificó una inicialización desde volumen fresco y no se ejecutó `down -v`; el smoke real tuvo éxito únicamente para los prompts acotados de esta guía.
+La ejecución opt-in observada termina con **158 aprobados** y los mismos 2 warnings upstream. El éxito demuestra las fronteras programadas, no la calidad universal de un modelo remoto. No se verificó una inicialización desde volumen fresco y no se ejecutó `down -v`; el smoke real tuvo éxito únicamente para los prompts acotados de esta guía.
 
 ## Solución de problemas
 
@@ -734,10 +744,10 @@ docker compose --env-file .env -f compose.yaml up -d --build --wait
 - [ ] E5 usa `passage:` para chunks y `query:` para preguntas; pgvector devuelve tres vecinos sólo sobre el corpus original, donde la paráfrasis literal devuelve cero.
 - [ ] La respuesta RAG se contrasta con página, sección y extracto; la ausencia de evidencia evita la llamada remota.
 - [ ] El SQL visible es un único `SELECT` admitido, ejecutado como `ai_readonly`, y el promedio es ~`805.6667`.
-- [ ] El modo integrado separa telemetría de evidencia manual y no sintetiza cuando falta el manual.
+- [ ] El modo integrado usa un orquestador que separa la pregunta, ejecuta sólo las ramas necesarias (telemetría, manual o ambas) y no sintetiza cuando falta el manual; un plan inválido cae a ejecutar ambas ramas con la pregunta original.
 - [ ] La inspección local muestra `rag_readonly`, proveniencia/distancia y `vector_dims=384` sin llamada paga ni contenido PDF crudo.
 - [ ] `HEAD`/`GET` desde `uploader` confirma tipo, tamaño, metadatos y hash sin imprimir contenido ni credenciales.
 - [ ] Se comprendieron costo, privacidad, prompt injection, posibles errores del modelo y que el corte `0.20` no es universal.
 - [ ] Un reinicio conserva identidad y chunks; no se confunde esa prueba con una inicialización en volumen fresco.
-- [ ] La suite normal informa 143 aprobados/1 omitido opcional y la opt-in 144 aprobados; ambos casos conservan 2 warnings upstream.
+- [ ] La suite normal informa 157 aprobados/1 omitido opcional y la opt-in 158 aprobados; ambos casos conservan 2 warnings upstream.
 - [ ] El cierre usa `down` sin `-v`.
