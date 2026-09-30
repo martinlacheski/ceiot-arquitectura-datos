@@ -9,10 +9,16 @@ compose() {
   docker compose --env-file "$ROOT/.env" -f "$ROOT/compose.yaml" "$@"
 }
 
+# Funciona desde el host (vía docker compose) o dentro del contenedor de Redis
+# (`docker compose exec redis sh /lab/examples/03-redis.sh`), donde no hay docker.
 redis_cli() {
   # REDISCLI_AUTH evita exponer la contraseña como argumento o en la salida.
-  compose exec -T redis sh -c \
-    'REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli --raw "$@"' sh "$@"
+  if command -v docker >/dev/null 2>&1; then
+    compose exec -T redis sh -c \
+      'REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli --raw "$@"' sh "$@"
+  else
+    REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli --raw "$@"
+  fi
 }
 
 echo 'Estado derivado de PostgreSQL (copia temporal, no fuente de verdad):'
@@ -29,4 +35,4 @@ redis_cli TTL "$PRACTICE_KEY"
 echo 'Recuperación: se elimina sólo la clave de práctica.'
 redis_cli DEL "$PRACTICE_KEY"
 echo 'Para reconstruir el estado canónico desde el historial real ejecutá:'
-echo "docker compose --env-file $ROOT/.env -f $ROOT/compose.yaml run --rm loader"
+echo 'docker compose --env-file .env -f compose.yaml run --rm loader'

@@ -4,6 +4,29 @@ Esta práctica conecta TimescaleDB, PostGIS, Redis, SeaweedFS (S3), embeddings l
 
 PostgreSQL conserva la verdad base; Redis guarda una copia temporal del último estado; SeaweedFS guarda los PDF originales; pgvector indexa fragmentos de esos PDF para buscarlos por similitud.
 
+## Requisitos
+
+- Docker con Docker Compose v2 (`docker compose`) y `curl`.
+- Unos **10 GB libres** para Docker: la imagen Python ocupa ~2 GB y el modelo `BAAI/bge-m3` ~4,3 GB (se descarga una sola vez).
+- Internet para la primera descarga del modelo y, opcionalmente, una clave de [OpenRouter](https://openrouter.ai/) para los modos con IA.
+
+## Servicios y URLs
+
+Todos los puertos se publican sólo en `127.0.0.1` y se pueden cambiar en `.env` (columna Variable).
+
+| Servicio | URL desde tu máquina | Credenciales (por defecto) | Variable | Para qué |
+| --- | --- | --- | --- | --- |
+| Aplicación web | [http://127.0.0.1:8006/](http://127.0.0.1:8006/) | — | `APP_PORT` | UI de carga de PDF y consultas RAG / Text-to-SQL / Integrado; API en `/api/query`, salud en `/health` |
+| pgAdmin | [http://127.0.0.1:5056/](http://127.0.0.1:5056/) | `student@example.edu` / `class6-local` | `PGADMIN_PORT` | Explorar tablas y ejecutar los scripts SQL |
+| PostgreSQL | `postgresql://ceiot:ceiot_local_only@127.0.0.1:5436/ceiot_class6` | `ceiot` / `ceiot_local_only` | `POSTGRES_PORT` | TimescaleDB, PostGIS y pgvector (desde pgAdmin usá el host `postgres` y el puerto `5432`) |
+| RedisInsight | [http://127.0.0.1:5540/](http://127.0.0.1:5540/) | — (la conexión `ceiot-clase-06` ya viene configurada) | `REDISINSIGHT_PORT` | Cliente web de Redis: ver claves, valores y TTL |
+| Redis | `redis://:ceiot_redis_local_only@127.0.0.1:6379/0` | contraseña `ceiot_redis_local_only` | `REDIS_PORT` | Copia temporal del último estado (`iot:last-known:AIR-002`) |
+| SeaweedFS S3 | `http://127.0.0.1:18333` | sin autenticación | `SEAWEEDFS_S3_PORT` | Endpoint S3 para clientes como `aws s3 --endpoint-url` |
+| SeaweedFS filer | [http://127.0.0.1:18888/buckets/](http://127.0.0.1:18888/buckets/) | sin autenticación | `SEAWEEDFS_FILER_PORT` | Navegar los buckets y descargar los PDF guardados (`ceiot-manuales/`) |
+| SeaweedFS master | [http://127.0.0.1:19333/](http://127.0.0.1:19333/) | sin autenticación | `SEAWEEDFS_MASTER_PORT` | Estado del clúster de un solo nodo y sus volúmenes |
+
+El servicio interno `uploader` (indexa los PDF subidos) no publica puerto: sólo lo usa la aplicación. Las credenciales son **exclusivas de este laboratorio local**; no las reutilices.
+
 ## Camino rápido
 
 Todos los comandos parten del directorio de la práctica (`cd clase-06/practica`).
@@ -20,19 +43,23 @@ Todos los comandos parten del directorio de la práctica (`cd clase-06/practica`
    docker compose --env-file .env -f compose.yaml up -d --build --wait
    ```
 
-3. Cargá ubicaciones, dispositivos y mediciones:
+   Levanta PostgreSQL, Redis, SeaweedFS, pgAdmin, `uploader` y la aplicación. Comprobá el estado con `docker compose --env-file .env -f compose.yaml ps`: todos deben figurar `healthy`. La base arranca vacía de datos (sólo esquema, roles y vistas).
+
+3. Cargá ubicaciones, dispositivos y mediciones (el script ya está montado en el contenedor en `/lab/seed`):
 
    ```bash
-   docker compose --env-file .env -f compose.yaml exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1' < postgres/seed/01-iot.sql
+   docker compose --env-file .env -f compose.yaml exec postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -f /lab/seed/01-iot.sql'
    ```
 
-   Al final debe mostrar `location_count=3`, `device_count=4`, `manual_count=1` y `measurement_count` de 104 o más (repetir el seed agrega mediciones recientes).
+   También podés abrir `seed/01-iot.sql` desde pgAdmin y ejecutarlo (ver [Ejecutar los scripts](#ejecutar-los-scripts)). Al final debe mostrar `location_count=3`, `device_count=4`, `manual_count=1` y `measurement_count` de 104 o más (repetir el seed agrega mediciones recientes).
 
 4. Generá el PDF del manual, subilo a S3 y copiá el último estado a Redis:
 
    ```bash
    docker compose --env-file .env -f compose.yaml run --rm loader
    ```
+
+   La salida confirma el bucket y la clave, `PDF=2 páginas`, el SHA-256 y el TTL de Redis. El PDF queda visible en [http://127.0.0.1:18888/buckets/ceiot-manuales/](http://127.0.0.1:18888/buckets/ceiot-manuales/).
 
 5. Indexá el manual (la primera vez descarga `BAAI/bge-m3`):
 
@@ -50,7 +77,75 @@ Todos los comandos parten del directorio de la práctica (`cd clase-06/practica`
 
    Responde `{"status":"ok"}`.
 
+7. (Opcional) Entrá a pgAdmin en [http://127.0.0.1:5056/](http://127.0.0.1:5056/) y registrá el servidor como se explica en [Conectar pgAdmin](#conectar-pgadmin).
+
+> **Orden de los pasos:** el loader necesita el seed (paso 3) para construir Redis, y la indexación necesita el loader (paso 4). RAG necesita los chunks del paso 5; Text-to-SQL necesita el seed.
+
 > **Clave de OpenRouter:** los modos **Text-to-SQL** e **Integrado** la necesitan, y **RAG** cuando encuentra evidencia y debe redactar la respuesta. Escribila sólo en `OPENROUTER_API_KEY` de tu `.env` local (no se versiona) y recreá la app con `up -d --build`. Cada llamada puede tener costo y envía tu pregunta y el contexto al proveedor: no uses datos personales ni sensibles. Revisá siempre el SQL, las filas y las fuentes, no sólo la prosa del modelo.
+
+## Conectar pgAdmin
+
+1. Abrí [http://127.0.0.1:5056/](http://127.0.0.1:5056/) e ingresá con `student@example.edu` / `class6-local`.
+2. Clic derecho en **Servers → Register → Server...**
+3. Pestaña **General**: nombre `Clase 6`.
+4. Pestaña **Connection**:
+
+   | Campo | Valor |
+   | --- | --- |
+   | Host name/address | `postgres` |
+   | Port | `5432` |
+   | Maintenance database | `ceiot_class6` |
+   | Username | `ceiot` |
+   | Password | `ceiot_local_only` (podés marcar **Save password**) |
+
+5. Guardá y abrí **Databases → ceiot_class6 → Schemas**: `public` tiene las tablas (`locations`, `devices`, `measurements`, `manual_documents`, `manual_chunks`) y `lab_read` las vistas de sólo lectura que usa Text-to-SQL.
+
+`postgres` es el nombre del servicio dentro de la red de Compose: desde pgAdmin **no** uses `localhost` ni `5436`. Si usás otro cliente desde tu máquina (DBeaver, `psql` local), ahí sí conectá a `127.0.0.1:5436`.
+
+## Ejecutar los scripts
+
+Los scripts están montados como sólo lectura dentro de los contenedores, así no hace falta copiar y pegar:
+
+| Carpeta del repositorio | Dentro de `postgres` y `pgadmin` | Dentro de `redis` |
+| --- | --- | --- |
+| [`postgres/seed/`](postgres/seed/) | `/lab/seed` | — |
+| [`postgres/examples/`](postgres/examples/) | `/lab/examples` | — |
+| [`examples/`](examples/) | — | `/lab/examples` |
+
+**Desde pgAdmin:** en el Query Tool usá el ícono de carpeta (**Open File**) y elegí el almacenamiento compartido `examples` o `seed` en el selector del diálogo. Abrí el archivo y ejecutalo con ▶ o F5. Las carpetas son de sólo lectura: si modificás un script, guardalo en tu almacenamiento personal (**My Storage**).
+
+**Desde el contenedor de PostgreSQL**, con `psql`:
+
+```bash
+docker compose --env-file .env -f compose.yaml exec postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -f /lab/examples/01-temporal.sql'
+```
+
+O en forma interactiva, para ejecutar y modificar consultas:
+
+```bash
+docker compose --env-file .env -f compose.yaml exec postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+ceiot_class6=# \i /lab/examples/02-spatial.sql
+```
+
+**Redis**, dentro del contenedor o desde el host (el script detecta dónde corre):
+
+```bash
+docker compose --env-file .env -f compose.yaml exec redis sh /lab/examples/03-redis.sh
+sh examples/03-redis.sh
+```
+
+**RedisInsight:** abrí [http://127.0.0.1:5540/](http://127.0.0.1:5540/), aceptá los términos de uso la primera vez y entrá a la base `ceiot-clase-06`. En **Browser** buscá `iot:*` para ver la clave `iot:last-known:AIR-002`, su valor JSON y el TTL que baja. Si la lista de bases aparece vacía, agregala a mano con host `redis`, puerto `6379` y la contraseña `ceiot_redis_local_only` (no uses `localhost`: RedisInsight corre en su propio contenedor).
+
+Para explorar Redis desde la terminal abrí `redis-cli` dentro del contenedor (la contraseña se toma de la variable del contenedor y no queda en el historial):
+
+```bash
+docker compose --env-file .env -f compose.yaml exec redis sh -c 'REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli'
+127.0.0.1:6379> KEYS iot:*
+127.0.0.1:6379> GET iot:last-known:AIR-002
+127.0.0.1:6379> TTL iot:last-known:AIR-002
+```
+
+**SeaweedFS:** abrí el filer en [http://127.0.0.1:18888/buckets/ceiot-manuales/](http://127.0.0.1:18888/buckets/ceiot-manuales/) para ver el manual inicial (`manuales/env-x/...`) y los PDF subidos desde la UI (`uploads/...`). Si tenés la CLI de AWS, también funciona como S3: `aws s3 ls s3://ceiot-manuales --recursive --endpoint-url http://127.0.0.1:18333 --no-sign-request`.
 
 ## Recorrido
 
@@ -58,19 +153,15 @@ Todos los comandos parten del directorio de la práctica (`cd clase-06/practica`
 | --- | --- | --- | --- |
 | 1 | TimescaleDB | `postgres/examples/01-temporal.sql` | Hypertable; promedios por minuto de CO₂ `802.5` y `812.0`; temperatura media del Aula 204 en las últimas 24 h (siempre devuelve una fila) |
 | 2 | PostGIS | `postgres/examples/02-spatial.sql` | `AIR-002` a 0 m y `AMB-001` a ~20 m; a menos de 2 km del Aula 204 hay tres dispositivos y `AMB-005` (a ~10 km) queda afuera |
-| 3 | Redis | `sh examples/03-redis.sh` | Clave `iot:last-known:AIR-002` con TTL de hasta 3600 s |
-| 4 | SeaweedFS | `run --rm loader` (paso 4) | Bucket y clave del PDF, `PDF=2 páginas`, SHA-256 |
+| 3 | Redis | `examples/03-redis.sh` (en el contenedor `redis` o desde el host) y RedisInsight | Clave `iot:last-known:AIR-002` con TTL de hasta 3600 s |
+| 4 | SeaweedFS | `run --rm loader` (paso 4) y el filer web | Bucket y clave del PDF, `PDF=2 páginas`, SHA-256; el archivo en [`/buckets/ceiot-manuales/`](http://127.0.0.1:18888/buckets/ceiot-manuales/) |
 | 5 | bge-m3 | `loader.ingest_vectors` (paso 5) | 4 chunks de 1024 dimensiones |
 | 6 | pgvector | `loader.query_vectors` y `postgres/examples/04-vector.sql` | 3 vecinos por similitud; la paráfrasis con `ILIKE` devuelve 0 |
 | 7 | RAG | UI o `/api/query` con `"mode": "rag"` | Respuesta con página y sección del manual |
 | 8 | Text-to-SQL | UI o `/api/query` con `"mode": "text-to-sql"` | Un único `SELECT` validado sobre `lab_read.measurements` y sus filas |
 | 9 | Integrado | UI o `/api/query` con `"mode": "integrated"` | Promedio de telemetría + procedimiento del manual |
 
-Los archivos SQL se ejecutan con el mismo patrón del seed, cambiando el archivo:
-
-```bash
-docker compose --env-file .env -f compose.yaml exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1' < postgres/examples/01-temporal.sql
-```
+Los archivos SQL de los pasos 1, 2 y 6 se ejecutan desde pgAdmin o con `psql` dentro del contenedor, como se muestra en [Ejecutar los scripts](#ejecutar-los-scripts).
 
 ### Pasos 6 a 9: consultas
 
@@ -147,7 +238,9 @@ Son opcionales y se definen en `.env`; si faltan, rige el valor por defecto. Tra
 | `REDIS_TTL_SECONDS` | `3600` | Vida de la clave de Redis |
 | `MANUAL_BUCKET` | `ceiot-manuales` | Bucket S3 de los manuales |
 | `UPLOADER_CPUS` / `UPLOADER_MEM_LIMIT` | `2` / `4g` | Recursos del servicio que indexa PDF |
-| `APP_PORT`, `POSTGRES_PORT`, `REDIS_PORT`, `SEAWEEDFS_S3_PORT` | `8006`, `5436`, `6379`, `18333` | Puertos publicados en `127.0.0.1` |
+| `APP_PORT`, `PGADMIN_PORT`, `REDISINSIGHT_PORT`, `POSTGRES_PORT`, `REDIS_PORT` | `8006`, `5056`, `5540`, `5436`, `6379` | Puertos publicados en `127.0.0.1` |
+| `SEAWEEDFS_S3_PORT`, `SEAWEEDFS_FILER_PORT`, `SEAWEEDFS_MASTER_PORT` | `18333`, `18888`, `19333` | Puertos de SeaweedFS (S3, filer web y master) en `127.0.0.1` |
+| `PGADMIN_DEFAULT_EMAIL` / `PGADMIN_DEFAULT_PASSWORD` | `student@example.edu` / `class6-local` | Acceso a pgAdmin (se aplican al crear el volumen `pgadmin_data`) |
 
 `MODELO_EMBEDDING` (`BAAI/bge-m3`) existe, pero no conviene cambiarlo: el esquema `VECTOR(1024)` y el corte coseno están calibrados para ese modelo.
 
@@ -157,26 +250,28 @@ Son opcionales y se definen en `.env`; si faltan, rige el valor por defecto. Tra
 - El loader, `ingest_vectors` y el seed se pueden repetir; no rompen el estado (el seed suma mediciones recientes).
 - Si la clave de Redis expiró, volvé a ejecutar `run --rm loader`.
 - Para detener conservando datos y caché del modelo: `docker compose --env-file .env -f compose.yaml down`.
-- **`down -v` borra todo** (historial, Redis, PDF y el modelo descargado). Usalo sólo si querés empezar de cero; luego repetí el camino rápido.
+- **`down -v` borra todo** (historial, Redis, PDF, el modelo descargado y la configuración de pgAdmin y RedisInsight). Usalo sólo si querés empezar de cero; luego repetí el camino rápido.
 
 ## Mapa de archivos
 
 | Ruta | Responsabilidad |
 | --- | --- |
-| [`compose.yaml`](compose.yaml) | Servicios, salud, volúmenes y roles de la demo |
+| [`compose.yaml`](compose.yaml) | Servicios (incluidos pgAdmin y RedisInsight), salud, volúmenes, montajes `/lab` y roles de la demo |
 | [`api/`](api/) | FastAPI, UI, cliente OpenRouter y flujos RAG / SQL / integrado |
 | [`loader/`](loader/) | PDF inicial, proyección a Redis, indexación vectorial y servicio de carga `uploader` |
 | [`shared/`](shared/) | Embeddings, recuperación pgvector y validación SQL |
 | [`postgres/init/`](postgres/init/) | Extensiones, tablas, roles y vistas de sólo lectura |
 | [`postgres/seed/01-iot.sql`](postgres/seed/01-iot.sql) | Dispositivos, mediciones y registro del manual |
 | [`postgres/examples/`](postgres/examples/) | Consultas de TimescaleDB, PostGIS y pgvector |
-| [`examples/03-redis.sh`](examples/03-redis.sh) | Lectura de la proyección en Redis |
+| [`examples/03-redis.sh`](examples/03-redis.sh) | Lectura de la proyección en Redis (host o contenedor) |
 | [`data/manual-content.json`](data/manual-content.json) | Contenido del manual ENV-X |
 | [`tests/`](tests/) | Tests con OpenRouter simulado: `docker compose --env-file .env -f compose.yaml run --rm --entrypoint pytest loader -q` |
 
 ## Problemas frecuentes
 
-- **`port is already allocated`:** algún puerto (5436, 6379, 18333, 8006) está ocupado; liberalo o cambialo en `.env`.
+- **`port is already allocated`:** algún puerto (8006, 5056, 5540, 5436, 6379, 18333, 18888, 19333) está ocupado; liberalo o cambialo en `.env`. Ojo: la Clase 5 también usa Redis en 6379 y RedisInsight en 5540; detenelas antes (`docker compose down` en su carpeta).
+- **pgAdmin no muestra datos o no conecta:** usá el host `postgres` y el puerto `5432`, no `localhost`. Si cambiaste el email o la contraseña en `.env` después del primer arranque, no se aplican: borrá sólo ese volumen con `docker compose --env-file .env -f compose.yaml down` y `docker volume rm ceiot-clase-06_pgadmin_data`.
+- **Las consultas devuelven 0 filas o Redis no tiene la clave:** falta el seed (paso 3) o expiró el TTL; repetí los pasos 3 y 4.
 - **La primera indexación o carga tarda:** se descarga `BAAI/bge-m3` (~4,3 GB de disco; conviene tener ~10 GB libres). Esperá y repetí el comando si se cortó.
 - **`/api/query` dice que falta la clave:** completá `OPENROUTER_API_KEY` en `.env` y recreá `app`. No la imprimas ni la pegues al pedir ayuda.
 - **No hay chunks:** ejecutá el loader y luego `loader.ingest_vectors`, en ese orden.
@@ -185,10 +280,11 @@ Son opcionales y se definen en `.env`; si faltan, rige el valor por defecto. Tra
 ## Lista de comprobación
 
 - [ ] Los servicios quedan saludables y `/health` responde `ok`.
+- [ ] pgAdmin conecta con el host `postgres` y abre los scripts desde `examples` y `seed`.
 - [ ] El seed informa 3 ubicaciones, 4 dispositivos, 1 manual y 104 o más mediciones.
 - [ ] TimescaleDB devuelve `802.5` y `812.0` por minuto y el promedio del Aula 204 en 24 h.
 - [ ] PostGIS devuelve `AIR-002` y `AMB-001` a 30 m, y excluye `AMB-005` a 2 km.
-- [ ] Redis muestra la clave `iot:last-known:AIR-002` con su TTL.
+- [ ] Redis (script o RedisInsight) muestra la clave `iot:last-known:AIR-002` con su TTL.
 - [ ] El manual queda indexado en 4 chunks de 1024 dimensiones.
 - [ ] pgvector devuelve 3 vecinos donde `ILIKE` devuelve 0.
 - [ ] RAG cita la sección de recalibración y sin evidencia no llama a OpenRouter.
