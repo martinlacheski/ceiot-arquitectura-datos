@@ -28,20 +28,7 @@ cd clase-06/practica
    docker compose --env-file .env -f compose.yaml up -d --build --wait
    ```
 
-3. Sobre un volumen existente creado antes de esta alineación, aplicá primero las evoluciones idempotentes que agregan ubicaciones geográficas y migran los embeddings a `BAAI/bge-m3` (podés repetirlas sin riesgo; también corren solas, sin efecto, en un volumen fresco):
-
-   ```bash
-   docker compose --env-file .env -f compose.yaml exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1' < postgres/init/06-locations.sql
-   docker compose --env-file .env -f compose.yaml exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1' < postgres/init/08-bge-m3-migration.sql
-   ```
-
-   La migración de embeddings descarta los chunks de 384 dimensiones (incompatibles con el modelo nuevo) y deja esos documentos en `index_status='pending'`. El manual semilla se reindexa en el paso 6; los PDF que hayas cargado antes por la UI se reindexan reutilizando los mismos bytes ya almacenados en SeaweedFS:
-
-   ```bash
-   docker compose --env-file .env -f compose.yaml run --rm --entrypoint python loader -m loader.reindex_documents
-   ```
-
-4. Cargá las ubicaciones, los dispositivos y el historial de mediciones:
+3. Cargá las ubicaciones, los dispositivos y el historial de mediciones:
 
    ```bash
    docker compose --env-file .env -f compose.yaml exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1' < postgres/seed/01-iot.sql
@@ -49,7 +36,7 @@ cd clase-06/practica
 
    El resultado final debe mostrar `location_count=3`, `device_count=4`, `manual_count=1` y `measurement_count` igual o mayor a `104` (8 mediciones fijas del 2025-05-12 más 96 horas recientes de `ENV-X`) en un volumen fresco, antes de cargar otros PDF. Repetir el seed en una hora distinta agrega mediciones nuevas: el conteo crece con cada resiembra tardía y no vuelve a 104. Después de una carga de PDF, el recuento de documentos también crece; no esperes que vuelva a uno.
 
-5. Generá el PDF de dos páginas, subilo a S3 y proyectá el último estado a Redis:
+4. Generá el PDF de dos páginas, subilo a S3 y proyectá el último estado a Redis:
 
    ```bash
    docker compose --env-file .env -f compose.yaml run --rm loader
@@ -57,7 +44,7 @@ cd clase-06/practica
 
    La salida confirma el bucket y la clave, `PDF=2 páginas`, una huella SHA-256 y un TTL de Redis cercano a `3600s`.
 
-6. Descargá `BAAI/bge-m3` la primera vez e indexá los cuatro fragmentos:
+5. Descargá `BAAI/bge-m3` la primera vez e indexá los cuatro fragmentos:
 
    ```bash
    docker compose --env-file .env -f compose.yaml run --rm --entrypoint python loader -m loader.ingest_vectors
@@ -65,7 +52,7 @@ cd clase-06/practica
 
    La salida esperada termina con `Indexación completa: 4 chunks de env-x-manual v1`.
 
-7. Abrí [http://127.0.0.1:8006/](http://127.0.0.1:8006/) o verificá primero la API:
+6. Abrí [http://127.0.0.1:8006/](http://127.0.0.1:8006/) o verificá primero la API:
 
    ```bash
    curl --fail http://127.0.0.1:8006/health
@@ -107,8 +94,7 @@ PostgreSQL 17
 loader/
   ├── data/manual-content.json → PDF inicial → SeaweedFS S3
   ├── PostgreSQL → última lectura → Redis con TTL
-  ├── PDF inicial desde S3 → bge-m3 local → pgvector
-  └── reindex_documents.py → PDF ya cargados desde S3 → bge-m3 local → pgvector
+  └── PDF inicial desde S3 → bge-m3 local → pgvector
 ```
 
 | Componente | Responsabilidad |
@@ -116,7 +102,7 @@ loader/
 | [`compose.yaml`](compose.yaml) | Servicios, salud, red local, volúmenes y roles de la demo |
 | [`Dockerfile`](Dockerfile) | Una imagen Python CPU compartida por `loader` y `app` |
 | [`api/`](api/) | FastAPI, proxy público de carga sin credenciales de escritura, catálogo, cliente OpenRouter, flujos RAG/SQL/integrado y HTML mínimo |
-| [`loader/`](loader/) | Creación y verificación del PDF inicial, proyección Redis, ingestión vectorial, reindexación de PDF cargados y servicio interno `uploader` |
+| [`loader/`](loader/) | Creación y verificación del PDF inicial, proyección Redis, ingestión vectorial y servicio interno `uploader` |
 | [`shared/`](shared/) | Embeddings locales (`bge-m3`), recuperación pgvector, validación SQL y ejecución restringida |
 | [`postgres/init/`](postgres/init/) | Extensiones, tablas, roles y vistas de sólo lectura |
 | [`postgres/seed/01-iot.sql`](postgres/seed/01-iot.sql) | Tres dispositivos, ocho mediciones y registro versionado del manual |
@@ -323,7 +309,7 @@ Cada fila conserva `document_id`, versión `1`, página, sección, `chunk_index`
 
 ### Interpretación
 
-A diferencia de E5, `BAAI/bge-m3` no distingue pasaje de pregunta con prefijos (`query:`/`passage:`): cada fragmento y cada pregunta se codifican con su texto tal cual. Esa es justamente la migración de esta práctica: E5 mostró un sesgo de idioma (preferir chunks en español aunque la pregunta tuviera mejor respuesta en un chunk en inglés) mientras que bge-m3, multilingüe end-to-end, no lo mostró en las mediciones registradas en `odd/tasks/clase-06-bge-m3.md`. El modelo corre en CPU y los embeddings son un índice derivado, no evidencia independiente.
+A diferencia de E5, `BAAI/bge-m3` no distingue pasaje de pregunta con prefijos (`query:`/`passage:`): cada fragmento y cada pregunta se codifican con su texto tal cual. Esa es justamente la migración de esta práctica: E5 mostró un sesgo de idioma (preferir chunks en español aunque la pregunta tuviera mejor respuesta en un chunk en inglés) mientras que bge-m3, multilingüe end-to-end, no lo mostró en la comparación de la sección 11. El modelo corre en CPU y los embeddings son un índice derivado, no evidencia independiente.
 
 ### Variación segura
 
@@ -355,7 +341,7 @@ Ese archivo ordena con `<=>` y muestra la proveniencia junto a cada vecino; desp
 
 ### Interpretación
 
-`embedding <=> query_embedding` calcula distancia coseno: menor significa más cercano. La API admite sólo vecinos con distancia `<= 0.55` **antes** de aplicar `top_k`. Ese corte es aproximado y fue recalibrado empíricamente para `BAAI/bge-m3` (las distancias de este modelo viven en otra escala que las de E5; ver la medición en `odd/tasks/clase-06-bge-m3.md`); puede aceptar falsos positivos, rechazar material útil y no promete pertinencia universal para PDF cargados.
+`embedding <=> query_embedding` calcula distancia coseno: menor significa más cercano. La API admite sólo vecinos con distancia `<= 0.55` **antes** de aplicar `top_k`. Ese corte es aproximado y fue recalibrado empíricamente para `BAAI/bge-m3` (las distancias de este modelo viven en otra escala que las de E5; la sección 11 muestra distancias medidas); puede aceptar falsos positivos, rechazar material útil y no promete pertinencia universal para PDF cargados.
 
 ### Variación segura
 
@@ -681,7 +667,19 @@ Esperá servicios saludables, recargá la UI e inspeccioná el mismo documento. 
 
 ## 11. Caso cruzado de idioma — manual en inglés, pregunta en español
 
-Esta es la razón concreta de la migración de E5 a `BAAI/bge-m3`: E5 mostraba un sesgo de idioma (un chunk en español podía ganarle a un chunk en inglés más relevante frente a la misma pregunta en español); bge-m3 es multilingüe de punta a punta y no mostró ese sesgo en la comparación registrada en `odd/tasks/clase-06-bge-m3.md`. Esta sección lo demuestra con un documento real.
+Esta es la razón concreta de la migración de E5 a `BAAI/bge-m3`: E5 mostraba un sesgo de idioma (un chunk en español podía ganarle a un chunk en inglés más relevante frente a la misma pregunta en español); bge-m3 es multilingüe de punta a punta y no mostró ese sesgo en la comparación que sigue. Esta sección lo demuestra con un documento real.
+
+La comparación se hizo sobre un corpus mixto de 11 fragmentos (7 en inglés sobre un microcontrolador ESP32 y los 4 del manual ENV-X en español) con 8 preguntas en español. Es una prueba chica para orientar la decisión, no un benchmark:
+
+| Modelo | Dimensiones | Chunk correcto en primer lugar | Peor puesto del chunk correcto |
+| --- | --- | --- | --- |
+| `intfloat/multilingual-e5-small` | 384 | 5 de 8 | 6.º |
+| `intfloat/multilingual-e5-base` | 768 | 4 de 8 | 5.º |
+| `intfloat/multilingual-e5-large` | 1024 | 5 de 8 | 4.º |
+| `multilingual-e5-small` + traducción automática de la pregunta | 384 | 5 de 8 | 4.º |
+| `BAAI/bge-m3` | 1024 | 7 de 8 | 2.º |
+
+Agrandar E5 no corrigió el sesgo: el problema era de la familia de modelos, no del tamaño.
 
 ### Comando
 
@@ -740,14 +738,14 @@ Los tests inyectan respuestas simuladas de OpenRouter y prueban recuperación, S
 docker compose --env-file .env -f compose.yaml run --rm --entrypoint pytest loader -q
 ```
 
-La ejecución normal observada termina con **161 aprobados, 1 omitido opcional y 2 warnings de dependencias upstream**. El único test omitido consulta el catálogo del volumen actual en modo de sólo lectura. Para incluirlo explícitamente:
+La ejecución normal observada termina con **157 aprobados, 1 omitido opcional y 2 warnings de dependencias upstream**. El único test omitido consulta el catálogo del volumen actual en modo de sólo lectura. Para incluirlo explícitamente:
 
 ```bash
 docker compose --env-file .env -f compose.yaml run --rm \
   -e RUN_LIVE_SEED_CATALOG_CHECK=1 --entrypoint pytest loader -q
 ```
 
-La ejecución opt-in observada termina con **162 aprobados** y los mismos 2 warnings upstream. El éxito demuestra las fronteras programadas, no la calidad universal de un modelo remoto. Sí se verificó una inicialización desde volumen fresco (proyecto Docker Compose descartable, puertos distintos, nunca `down -v` sobre el volumen de este recorrido); ver la sección 11 y `odd/tasks/clase-06-bge-m3.md` para las mediciones.
+La ejecución opt-in observada termina con **158 aprobados** y los mismos 2 warnings upstream. El éxito demuestra las fronteras programadas, no la calidad universal de un modelo remoto. Sí se verificó una inicialización desde volumen fresco (proyecto Docker Compose descartable, puertos distintos, nunca `down -v` sobre el volumen de este recorrido); la sección 11 resume las mediciones.
 
 ## Solución de problemas
 
@@ -813,6 +811,5 @@ docker compose --env-file .env -f compose.yaml up -d --build --wait
 - [ ] Se comprendieron costo, privacidad, prompt injection, posibles errores del modelo y que el corte `0.55` no es universal.
 - [ ] Un reinicio conserva identidad y chunks; no se confunde esa prueba con una inicialización en volumen fresco.
 - [ ] Un documento en inglés consultado en español recupera el chunk correcto (sección 11); se entiende que el corte `0.55` fue calibrado con esa mezcla, no es garantía universal.
-- [ ] Sobre un volumen existente, la migración `08-bge-m3-migration.sql` es idempotente (aplicarla dos veces no cambia nada la segunda vez) y `loader.reindex_documents` deja indexados otra vez los documentos cargados por la UI.
-- [ ] La suite normal informa 161 aprobados/1 omitido opcional y la opt-in 162 aprobados; ambos casos conservan 2 warnings upstream.
+- [ ] La suite normal informa 157 aprobados/1 omitido opcional y la opt-in 158 aprobados; ambos casos conservan 2 warnings upstream.
 - [ ] El cierre usa `down` sin `-v`.
