@@ -556,7 +556,7 @@ def test_app_service_has_only_restricted_database_credentials() -> None:
     assert "POSTGRES_USER" not in keys
     assert "POSTGRES_PASSWORD" not in keys
     assert {"RAG_POSTGRES_USER", "AI_POSTGRES_USER", "OPENROUTER_API_KEY"} <= keys
-    assert '"127.0.0.1:8006:8006"' in app_block
+    assert '"127.0.0.1:${APP_PORT:-8006}:8006"' in app_block
 
 
 def test_database_and_model_failures_become_sanitized_503(

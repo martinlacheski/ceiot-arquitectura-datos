@@ -17,14 +17,15 @@ from shared.rag_connection import (  # type: ignore[import-not-found]
     rag_connection_settings,
     validate_document_id,
 )
-from shared.retrieval import nearest_manual_chunks  # type: ignore[import-not-found]
+from shared.retrieval import (  # type: ignore[import-not-found]
+    MAX_TOP_K,
+    nearest_manual_chunks,
+)
 from shared.sql_guard import SQLRejected, validate_sql  # type: ignore[import-not-found]
 from shared.sql_query import (  # type: ignore[import-not-found]
     QueryResult,
     execute_validated_sql,
 )
-
-MAX_TOP_K = 4
 
 
 class ServiceUnavailable(RuntimeError):
@@ -62,7 +63,7 @@ def retrieve_manual(
     question: str, top_k: int, document_id: str | None = None
 ) -> list[dict[str, Any]]:
     if not 1 <= top_k <= MAX_TOP_K:
-        raise ValueError("top_k debe estar entre 1 y 4")
+        raise ValueError(f"top_k debe estar entre 1 y {MAX_TOP_K}")
     if document_id is not None:
         validate_document_id(document_id)
     try:

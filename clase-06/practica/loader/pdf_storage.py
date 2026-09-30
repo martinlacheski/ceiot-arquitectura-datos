@@ -21,6 +21,7 @@ from loader.pdf_document import (
     passage_text,
 )
 from shared.embeddings import (
+    EMBEDDING_BATCH_SIZE,
     EXPECTED_DIMENSION,
     MODEL_NAME,
     embedding_model,
@@ -28,13 +29,6 @@ from shared.embeddings import (
 )
 
 CONTENT_TYPE = "application/pdf"
-
-# Measured 2026-09-30 on the uploader container (2 CPU threads, bge-m3, throwaway
-# stack, real 78/89/93-chunk ESP32 datasheets): batch 4 -> 1.09 s/chunk and 3.21 GiB
-# peak RSS; batch 8 -> 1.09 s/chunk and 3.22 GiB; batch 32 -> 1.82 s/chunk and
-# 3.88 GiB, too close to the uploader's 4g mem_limit. Peak memory tracks batch size,
-# not document size, so a small fixed batch keeps memory flat as documents grow.
-EMBEDDING_BATCH_SIZE = 4
 
 
 class UploadUnavailable(RuntimeError):

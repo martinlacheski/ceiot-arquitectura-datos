@@ -89,7 +89,7 @@ def test_document_upload_columns_and_constraints_are_installed() -> None:
         "manual_documents_byte_count_range_check"
     ]
     assert "byte_count >= 1" in byte_count_constraint
-    assert "byte_count <= 52428800" in byte_count_constraint
+    assert "52428800" not in byte_count_constraint  # el tope lo aplica la app
     page_count_constraint = constraints[
         "manual_documents_page_count_range_check"
     ]

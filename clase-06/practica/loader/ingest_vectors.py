@@ -16,18 +16,13 @@ from botocore.config import Config  # type: ignore[import-not-found]
 from pypdf import PdfReader  # type: ignore[import-not-found]
 
 from shared.embeddings import (  # type: ignore[import-not-found]
+    EMBEDDING_BATCH_SIZE,
     MODEL_NAME,
     embedding_model,
     vector_literal,
 )
 
 SEED_DOCUMENT_ID = "env-x-manual"
-
-# Same fixed batch size as loader/pdf_storage.py (measured there: batch 4 keeps peak
-# RSS flat at 3.21 GiB vs 3.88 GiB for batch 32). This seed manual is always exactly
-# 4 chunks, so batching is a no-op here in practice, but it keeps both call sites
-# consistent if the seed ever grows.
-EMBEDDING_BATCH_SIZE = 4
 
 EXPECTED_SECTIONS = (
     (1, "Preparación y condiciones"),
@@ -258,9 +253,7 @@ def store_chunks(
 
 
 def main() -> None:
-    model_name: str = os.environ.get("MODELO_EMBEDDING") or MODEL_NAME
-    if model_name != MODEL_NAME:
-        raise ValueError(f"Esta práctica fija MODELO_EMBEDDING={MODEL_NAME}")
+    model_name: str = MODEL_NAME
 
     with postgres_connection() as connection:
         document_id, version, object_key = read_available_document(connection)

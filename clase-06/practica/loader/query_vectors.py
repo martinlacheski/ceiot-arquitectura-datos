@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import os
 from typing import Any
 
 from loader.ingest_vectors import postgres_connection
@@ -14,7 +13,7 @@ from shared.embeddings import (  # type: ignore[import-not-found]
     query_text,
     vector_literal,
 )
-from shared.retrieval import nearest_manual_chunks  # type: ignore[import-not-found]
+from shared.retrieval import MAX_TOP_K, nearest_manual_chunks  # type: ignore[import-not-found]
 
 DEFAULT_QUESTION = "¿Cómo debe recalibrarse el sensor ENV-X después de reemplazar la batería?"
 
@@ -57,16 +56,14 @@ def print_results(title: str, rows: list[tuple[Any, ...]], semantic: bool) -> No
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--question", default=DEFAULT_QUESTION)
-    parser.add_argument("--top-k", type=int, default=3)
+    parser.add_argument("--top-k", type=int, default=min(3, MAX_TOP_K))
     args = parser.parse_args()
     if not args.question.strip():
         raise SystemExit("La pregunta no puede estar vacía")
-    if not 1 <= args.top_k <= 4:
-        raise SystemExit("--top-k debe estar entre 1 y 4")
+    if not 1 <= args.top_k <= MAX_TOP_K:
+        raise SystemExit(f"--top-k debe estar entre 1 y {MAX_TOP_K}")
 
-    model_name: str = os.environ.get("MODELO_EMBEDDING") or MODEL_NAME
-    if model_name != MODEL_NAME:
-        raise ValueError(f"Esta práctica fija MODELO_EMBEDDING={MODEL_NAME}")
+    model_name: str = MODEL_NAME
     print(f"Cargando modelo local {model_name}.")
     model = embedding_model()
     embedding = model.encode(query_text(args.question), normalize_embeddings=True)

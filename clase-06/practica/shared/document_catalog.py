@@ -8,6 +8,7 @@ from typing import Any
 
 import psycopg  # type: ignore[import-not-found]
 
+from shared.document_limits import MAX_CHUNK_CHARS  # type: ignore[import-not-found]
 from shared.embeddings import EXPECTED_DIMENSION  # type: ignore[import-not-found]
 from shared.rag_connection import (  # type: ignore[import-not-found]
     rag_connection_settings,
@@ -139,11 +140,11 @@ def document_details(document_id: str) -> dict[str, Any] | None:
             document = dict(document_row)
 
             cursor.execute(
-                """
+                f"""
                 SELECT chunk.chunk_index,
                        chunk.page,
                        left(chunk.section, 200) AS section,
-                       left(chunk.content, 1200) AS content,
+                       left(chunk.content, {MAX_CHUNK_CHARS}) AS content,
                        chunk.content_sha256,
                        vector_dims(chunk.embedding) AS vector_dims,
                        chunk.embedding::text AS embedding_text

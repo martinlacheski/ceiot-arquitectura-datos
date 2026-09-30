@@ -7,9 +7,14 @@ from typing import Any
 
 import httpx  # type: ignore[import-not-found]
 
+from shared.settings import env_int  # type: ignore[import-not-found]
+
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 DEFAULT_MODEL = "openai/gpt-4o-mini"
-MAX_COMPLETION_TOKENS = 300
+# Tope global de tokens de salida por llamada. Cada flujo pide su propio valor
+# (p. ej. 180 o 260 en workflows.py); `chat` aplica el menor de los dos, así que
+# bajar este tope acorta todas las respuestas sin romper ningún flujo.
+MAX_COMPLETION_TOKENS = env_int("OPENROUTER_MAX_COMPLETION_TOKENS", 300, minimum=1, maximum=4096)
 
 
 class MissingOpenRouterKey(RuntimeError):
@@ -37,8 +42,9 @@ class OpenRouterClient:
         *,
         max_completion_tokens: int = MAX_COMPLETION_TOKENS,
     ) -> str:
-        if not 1 <= max_completion_tokens <= MAX_COMPLETION_TOKENS:
-            raise ValueError("max_completion_tokens debe estar entre 1 y 300")
+        if max_completion_tokens < 1:
+            raise ValueError("max_completion_tokens debe ser al menos 1")
+        max_completion_tokens = min(max_completion_tokens, MAX_COMPLETION_TOKENS)
         try:
             with httpx.Client(timeout=httpx.Timeout(12.0, connect=4.0)) as client:
                 response = client.post(

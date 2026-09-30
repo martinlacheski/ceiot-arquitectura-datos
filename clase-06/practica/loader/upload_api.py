@@ -23,6 +23,7 @@ from starlette.concurrency import run_in_threadpool  # type: ignore[import-not-f
 from loader import pdf_storage
 from loader.pdf_document import (
     MAX_PDF_BYTES,
+    MAX_PDF_MIB,
     MAX_TITLE_CHARS,
     ParsedDocument,
     PDFRejected,
@@ -54,7 +55,9 @@ def _reject_known_oversize(request: Request) -> None:
     except ValueError:
         return
     if content_length > MAX_PDF_BYTES:
-        raise HTTPException(status_code=413, detail="El PDF supera el límite de 50 MiB.")
+        raise HTTPException(
+            status_code=413, detail=f"El PDF supera el límite de {MAX_PDF_MIB} MiB."
+        )
 
 
 async def _bounded_body(request: Request) -> bytes:
@@ -63,7 +66,7 @@ async def _bounded_body(request: Request) -> bytes:
         if len(body) + len(chunk) > MAX_PDF_BYTES:
             raise HTTPException(
                 status_code=413,
-                detail="El PDF supera el límite de 50 MiB.",
+                detail=f"El PDF supera el límite de {MAX_PDF_MIB} MiB.",
             )
         body.extend(chunk)
     return bytes(body)

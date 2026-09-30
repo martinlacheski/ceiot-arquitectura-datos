@@ -6,13 +6,18 @@ import math
 from typing import Any
 
 from shared.rag_connection import validate_document_id  # type: ignore[import-not-found]
+from shared.settings import env_float, env_int  # type: ignore[import-not-found]
 
-# Umbral didáctico recalibrado empíricamente para BAAI/bge-m3 (ver
-# odd/tasks/clase-06-bge-m3.md para las mediciones): las distancias de este
-# modelo viven en otra escala que las de E5. Sigue sin ser un clasificador
+# Umbral didáctico recalibrado empíricamente para BAAI/bge-m3 (ver las
+# mediciones en la sección 11 del README): las distancias de este modelo
+# viven en otra escala que las de E5. Sigue sin ser un clasificador
 # semántico universal ni una garantía de relevancia: un resultado filtrado
 # no prueba pertinencia y uno descartado no prueba irrelevancia.
-MAX_COSINE_DISTANCE = 0.55
+MAX_COSINE_DISTANCE = env_float(
+    "RAG_MAX_COSINE_DISTANCE", 0.55, minimum=0.01, maximum=2.0
+)
+# Máximo de fragmentos por consulta (la API, la UI y el CLI lo comparten).
+MAX_TOP_K = env_int("RAG_MAX_TOP_K", 4, minimum=1, maximum=20)
 
 
 def nearest_manual_chunks(
@@ -25,8 +30,8 @@ def nearest_manual_chunks(
 ) -> list[dict[str, Any]] | list[tuple[Any, ...]]:
     """Recupera vecinos disponibles que pasan el corte antes de aplicar top-k."""
 
-    if isinstance(top_k, bool) or not isinstance(top_k, int) or not 1 <= top_k <= 4:
-        raise ValueError("top_k debe estar entre 1 y 4")
+    if isinstance(top_k, bool) or not isinstance(top_k, int) or not 1 <= top_k <= MAX_TOP_K:
+        raise ValueError(f"top_k debe estar entre 1 y {MAX_TOP_K}")
     if (
         isinstance(max_cosine_distance, bool)
         or not isinstance(max_cosine_distance, (int, float))

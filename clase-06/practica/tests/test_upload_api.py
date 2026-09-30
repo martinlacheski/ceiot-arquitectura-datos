@@ -471,19 +471,18 @@ def test_uploader_compose_service_is_internal_bounded_and_least_privileged() -> 
     assert 'POSTGRES_PORT: "5432"' in uploader
     assert "POSTGRES_DB" in environment_keys
     assert "SEAWEEDFS_S3_ENDPOINT: http://seaweedfs:8333" in uploader
-    assert "MANUAL_BUCKET: ceiot-manuales" in uploader
-    assert "MODELO_EMBEDDING: BAAI/bge-m3" in uploader
+    assert "MANUAL_BUCKET: ${MANUAL_BUCKET:-ceiot-manuales}" in uploader
+    assert "MODELO_EMBEDDING: ${MODELO_EMBEDDING:-BAAI/bge-m3}" in uploader
     # Los hilos de PyTorch deben coincidir con las CPU asignadas al servicio.
-    assert 'cpus: "2.0"' in uploader
-    assert 'OMP_NUM_THREADS: "2"' in uploader
+    assert 'cpus: "${UPLOADER_CPUS:-2}"' in uploader
+    assert 'OMP_NUM_THREADS: "${UPLOADER_CPUS:-2}"' in uploader
     assert "embedding_model_cache:/models/huggingface" in uploader
     assert {"POSTGRES_USER", "POSTGRES_PASSWORD", "OPENROUTER_API_KEY"}.isdisjoint(
         environment_keys
     )
     assert "postgres:\n        condition: service_healthy" in uploader
     assert "seaweedfs:\n        condition: service_healthy" in uploader
-    assert "mem_limit: 4g" in uploader
-    assert 'cpus: "2.0"' in uploader
+    assert "mem_limit: ${UPLOADER_MEM_LIMIT:-4g}" in uploader
     assert "pids_limit: 256" in uploader
     assert "http://127.0.0.1:8007/health" in uploader
     assert "profiles:" not in uploader

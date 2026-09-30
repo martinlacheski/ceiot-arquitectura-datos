@@ -22,10 +22,12 @@ from reportlab.lib.pagesizes import A4
 from reportlab.pdfbase.pdfmetrics import stringWidth
 from reportlab.pdfgen import canvas
 
+from shared.settings import env_int
+
 OBJECT_KEY = "manuales/env-x/v1/manual_ENV_X.pdf"
 CONTENT_TYPE = "application/pdf"
 REDIS_KEY = "iot:last-known:AIR-002"
-REDIS_TTL_SECONDS = 3600
+REDIS_TTL_SECONDS = env_int("REDIS_TTL_SECONDS", 3600, minimum=1)
 
 
 def required_env(name: str) -> str:

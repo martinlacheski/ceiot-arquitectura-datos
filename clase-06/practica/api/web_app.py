@@ -17,7 +17,7 @@ from fastapi import (  # type: ignore[import-not-found]
     HTTPException,
     Request,
 )
-from fastapi.responses import FileResponse, StreamingResponse  # type: ignore[import-not-found]
+from fastapi.responses import HTMLResponse, StreamingResponse  # type: ignore[import-not-found]
 from pydantic import (  # type: ignore[import-not-found]
     BaseModel,
     ConfigDict,
@@ -34,10 +34,12 @@ from api.openrouter_client import (  # type: ignore[import-not-found]
 )
 from loader.pdf_document import (  # type: ignore[import-not-found]
     MAX_PDF_BYTES,
+    MAX_PDF_MIB,
     MAX_TITLE_CHARS,
 )
 from shared import document_catalog  # type: ignore[import-not-found]
 from shared.rag_connection import validate_document_id  # type: ignore[import-not-found]
+from shared.retrieval import MAX_TOP_K  # type: ignore[import-not-found]
 from shared.sql_guard import SQLRejected  # type: ignore[import-not-found]
 
 app = FastAPI(title="Laboratorio IoT Clase 06", version="1.0.0")
@@ -51,6 +53,7 @@ UPLOADER_URL = "http://uploader:8007/internal/documents"
 # read into memory before this request starts.
 UPLOADER_TIMEOUT = httpx.Timeout(connect=10.0, write=30.0, read=120.0, pool=10.0)
 MAX_ENCODED_TITLE_CHARS = 1200
+DEFAULT_TOP_K = min(4, MAX_TOP_K)
 _BAD_PERCENT_ESCAPE = re.compile(r"%(?![0-9A-Fa-f]{2})")
 _UPLOAD_PROGRESS_STAGES = frozenset(
     {"pdf_validated", "chunks_embedded", "s3_stored", "s3_verified", "postgres_indexed"}
@@ -62,7 +65,7 @@ _INVALID_UPSTREAM_ERROR = "El servicio de carga devolvió una respuesta inválid
 class QueryRequest(BaseModel):
     question: str = Field(min_length=3, max_length=500)
     mode: Literal["rag", "text-to-sql", "integrated"]
-    top_k: int = Field(default=4, ge=1, le=4)
+    top_k: int = Field(default=DEFAULT_TOP_K, ge=1, le=MAX_TOP_K)
     document_id: str | None = None
 
     @field_validator("question")
@@ -101,7 +104,7 @@ class UploadSummary(BaseModel):
     page_count: int = Field(ge=1)
     extracted_char_count: int = Field(ge=1)
     chunk_count: int = Field(ge=1)
-    embedding_model: Literal["BAAI/bge-m3"]
+    embedding_model: str = Field(min_length=1, max_length=200)
     dimension: Literal[1024]
     index_status: Literal["indexed"]
     embedding_preview: list[float] = Field(min_length=6, max_length=6)
@@ -136,9 +139,24 @@ class UploadSummary(BaseModel):
         return self
 
 
-@app.get("/", response_class=FileResponse)
-def root() -> FileResponse:
-    return FileResponse(INDEX_HTML, media_type="text/html; charset=utf-8")
+def render_index() -> str:
+    """Inyecta en la UI los límites configurados: el navegador no los duplica."""
+
+    replacements = {
+        "{{MAX_PDF_MIB}}": str(MAX_PDF_MIB),
+        "{{MAX_PDF_BYTES}}": str(MAX_PDF_BYTES),
+        "{{MAX_TOP_K}}": str(MAX_TOP_K),
+        "{{DEFAULT_TOP_K}}": str(DEFAULT_TOP_K),
+    }
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    for placeholder, value in replacements.items():
+        html = html.replace(placeholder, value)
+    return html
+
+
+@app.get("/", response_class=HTMLResponse)
+def root() -> HTMLResponse:
+    return HTMLResponse(render_index())
 
 
 @app.get("/health")
@@ -160,7 +178,7 @@ def _reject_known_oversize(request: Request) -> None:
     except ValueError:
         return
     if content_length > MAX_PDF_BYTES:
-        raise HTTPException(status_code=413, detail="El PDF supera el límite de 50 MiB.")
+        raise HTTPException(status_code=413, detail=f"El PDF supera el límite de {MAX_PDF_MIB} MiB.")
 
 
 async def _bounded_body(request: Request) -> bytes:
@@ -169,7 +187,7 @@ async def _bounded_body(request: Request) -> bytes:
         if len(body) + len(chunk) > MAX_PDF_BYTES:
             raise HTTPException(
                 status_code=413,
-                detail="El PDF supera el límite de 50 MiB.",
+                detail=f"El PDF supera el límite de {MAX_PDF_MIB} MiB.",
             )
         body.extend(chunk)
     return bytes(body)

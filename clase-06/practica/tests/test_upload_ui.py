@@ -13,7 +13,9 @@ def test_upload_controls_and_limits_are_explicit_and_accessible() -> None:
     assert '<form id="upload-form">' in html
     assert 'id="pdf-file" name="pdf" type="file"' in html
     assert 'accept=".pdf,application/pdf"' in html
-    assert "50 MiB" in html and "52428800" in html
+    # Los límites no están fijos en el HTML: los inyecta la app desde el entorno.
+    assert "{{MAX_PDF_MIB}}" in html and "{{MAX_PDF_BYTES}}" in html
+    assert "52428800" not in html and "50 MiB" not in html
     assert "Sin límite de páginas" in html
     assert "segundos por fragmento" in html
     assert "sólo texto extraíble" in html and "OCR" in html and "cifrados" in html
@@ -140,7 +142,10 @@ def test_existing_free_question_and_optional_examples_remain_intact() -> None:
     assert html.count('class="example" type="button"') == 3
     assert "example.addEventListener('click'" in html
     assert "question.focus()" in html
-    assert 'id="top-k" name="top_k" type="number" min="1" max="4" value="4"' in html
+    assert (
+        'id="top-k" name="top_k" type="number" min="1" max="{{MAX_TOP_K}}" '
+        'value="{{DEFAULT_TOP_K}}"'
+    ) in html
     assert "fetch('/api/query'" in html
     assert all(marker in html for marker in ('id="sql"', 'id="rows"', 'id="trace"', 'id="sources"'))
     assert "OPENROUTER_API_KEY" not in html

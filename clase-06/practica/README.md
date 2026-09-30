@@ -42,7 +42,7 @@ cd clase-06/practica
    docker compose --env-file .env -f compose.yaml run --rm loader
    ```
 
-   La salida confirma el bucket y la clave, `PDF=2 páginas`, una huella SHA-256 y un TTL de Redis cercano a `3600s`.
+   La salida confirma el bucket y la clave, `PDF=2 páginas`, una huella SHA-256 y un TTL de Redis cercano a `3600s` (el valor por defecto de `REDIS_TTL_SECONDS`).
 
 5. Descargá `BAAI/bge-m3` la primera vez e indexá los cuatro fragmentos:
 
@@ -135,7 +135,38 @@ El loader y la API comparten la misma imagen CPU y la misma caché del modelo. S
 
 Los enlaces son locales. SeaweedFS usa un solo nodo sin TLS ni autenticación S3; los roles `ai_readonly`, `rag_readonly` y `rag_ingest` y sus credenciales fijas son **sólo para esta demo aislada**. `rag_ingest` puede modificar únicamente las tablas de documentos y chunks; no tiene acceso de propietario, a `lab_read` ni a la telemetría. No reutilices esta topología ni esas credenciales en producción.
 
-Si un puerto ya está ocupado, detené el proceso o el laboratorio que lo usa antes de continuar. No cambies otros contenedores para acomodar esta práctica. PostgreSQL, Redis y SeaweedFS permiten cambiar sus puertos publicados mediante `POSTGRES_PORT`, `REDIS_PORT` y `SEAWEEDFS_S3_PORT`; la aplicación queda fijada en `8006`.
+Si un puerto ya está ocupado, detené el proceso o el laboratorio que lo usa antes de continuar. No cambies otros contenedores para acomodar esta práctica. PostgreSQL, Redis y SeaweedFS permiten cambiar sus puertos publicados mediante `POSTGRES_PORT`, `REDIS_PORT` y `SEAWEEDFS_S3_PORT`; la aplicación se publica en `8006` por defecto y podés cambiarlo con `APP_PORT` (dentro del contenedor sigue escuchando en `8006`; las URL de esta guía asumen el valor por defecto).
+
+## Configuración por variables de entorno
+
+Los valores ajustables viven en `.env` (copiá `.env.example`). Todas son opcionales: si no las definís, Compose usa el valor por defecto de la tabla, que es el que describe el resto de esta guía. Un valor inválido (por ejemplo un entero no numérico o un solapamiento mayor que el tamaño de fragmento) hace fallar el servicio al arrancar con un mensaje que nombra la variable. Tras cambiar `.env`, recreá los servicios afectados (`up -d --build`).
+
+| Variable | Por defecto | Qué controla | Servicios |
+| --- | --- | --- | --- |
+| `MODELO_EMBEDDING` | `BAAI/bge-m3` | Nombre del modelo de embeddings local y valor guardado en `embedding_model`. Existe para configurar, no para intercambiar modelos: el esquema `VECTOR(1024)`, el corte coseno y el uso sin prefijos están calibrados para bge-m3, así que cambiarlo no está soportado sin adaptarlos (un modelo de otra dimensión falla con un mensaje claro). | `app`, `uploader`, `loader` |
+| `EMBEDDING_BATCH_SIZE` | `4` | Fragmentos por lote al calcular embeddings; más lote, más memoria. | `uploader`, `loader` |
+| `RAG_MAX_COSINE_DISTANCE` | `0.55` | Distancia coseno máxima aceptada por la recuperación, antes de aplicar `top_k`. | `app`, `loader` |
+| `RAG_MAX_TOP_K` | `4` | Máximo de fragmentos por consulta (API, selector de la UI y `--top-k` del CLI). | `app`, `loader` |
+| `MAX_PDF_MIB` | `50` | Tamaño máximo de un PDF en MiB; la UI toma el valor del servidor. La base sólo exige `byte_count >= 1`: el tope lo aplica la aplicación. | `app`, `uploader` |
+| `CHUNK_MAX_CHARS` | `1200` | Tamaño máximo de cada fragmento en caracteres. | `app`, `uploader` |
+| `CHUNK_OVERLAP_CHARS` | `150` | Solape entre fragmentos consecutivos; debe ser menor que `CHUNK_MAX_CHARS`. | `app`, `uploader` |
+| `OPENROUTER_MAX_COMPLETION_TOKENS` | `300` | Tope global de tokens de salida por llamada a OpenRouter. Cada flujo pide su propio máximo (180 a 260) y se aplica el menor de los dos: bajar el tope acorta todas las respuestas; subirlo no agranda las de los flujos que piden menos. | `app` |
+| `APP_PORT` | `8006` | Puerto de la aplicación publicado en `127.0.0.1`. | `app` |
+| `UPLOADER_CPUS` | `2` | CPU (entero) del `uploader`; también fija `OMP_NUM_THREADS`, porque los hilos de PyTorch deben coincidir con las CPU. | `uploader` |
+| `UPLOADER_MEM_LIMIT` | `4g` | Límite de memoria del `uploader`. | `uploader` |
+| `REDIS_TTL_SECONDS` | `3600` | Vida de la clave `iot:last-known:AIR-002` que carga el `loader`. | `loader` |
+| `MANUAL_BUCKET` | `ceiot-manuales` | Bucket S3 de los manuales. | `uploader`, `loader` |
+
+Quedan fijos a propósito: las contraseñas de los roles de la demo (también están en los scripts SQL de inicialización), los límites de seguridad de `sql_guard`, los prompts, el texto del esquema SQL, los nombres y puertos internos de los contenedores y los tipos de contenido.
+
+En un volumen que ya existe, el `CHECK` de tamaño máximo que crea `05-document-upload.sql` no se actualiza solo (los scripts de inicialización sólo corren en volúmenes nuevos). Si tu base se creó con la versión anterior (tope fijo de 50 MiB en la base) y subís `MAX_PDF_MIB`, reemplazá esa restricción una vez:
+
+```bash
+docker compose --env-file .env -f compose.yaml exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1' <<'SQL'
+ALTER TABLE public.manual_documents DROP CONSTRAINT manual_documents_byte_count_range_check;
+ALTER TABLE public.manual_documents ADD CONSTRAINT manual_documents_byte_count_range_check CHECK (byte_count IS NULL OR byte_count >= 1);
+SQL
+```
 
 ## 1. TimescaleDB — historial y agregación temporal
 
@@ -341,11 +372,11 @@ Ese archivo ordena con `<=>` y muestra la proveniencia junto a cada vecino; desp
 
 ### Interpretación
 
-`embedding <=> query_embedding` calcula distancia coseno: menor significa más cercano. La API admite sólo vecinos con distancia `<= 0.55` **antes** de aplicar `top_k`. Ese corte es aproximado y fue recalibrado empíricamente para `BAAI/bge-m3` (las distancias de este modelo viven en otra escala que las de E5; la sección 11 muestra distancias medidas); puede aceptar falsos positivos, rechazar material útil y no promete pertinencia universal para PDF cargados.
+`embedding <=> query_embedding` calcula distancia coseno: menor significa más cercano. La API admite sólo vecinos con distancia `<= 0.55` (valor por defecto de `RAG_MAX_COSINE_DISTANCE`) **antes** de aplicar `top_k`. Ese corte es aproximado y fue recalibrado empíricamente para `BAAI/bge-m3` (las distancias de este modelo viven en otra escala que las de E5; la sección 11 muestra distancias medidas); puede aceptar falsos positivos, rechazar material útil y no promete pertinencia universal para PDF cargados.
 
 ### Variación segura
 
-Probá otra pregunta manteniendo `--top-k` entre `1` y `4`. Compará siempre sección, extracto y distancia; una cercanía numérica no vuelve verdadera una respuesta.
+Probá otra pregunta manteniendo `--top-k` entre `1` y `4` (el máximo por defecto de `RAG_MAX_TOP_K`). Compará siempre sección, extracto y distancia; una cercanía numérica no vuelve verdadera una respuesta.
 
 ### Recuperación
 
@@ -659,7 +690,7 @@ El resultado esperado informa `role: rag_ingest`, la clave seleccionada y los cu
 ### Recuperación
 
 - **Archivo inválido o sin texto:** elegí un PDF real con texto extraíble. No renombres una imagen a `.pdf`; exportala con texto o aplicá OCR fuera de este laboratorio y revisá el resultado antes de reintentar.
-- **Más de 50 MiB:** es el único límite de tamaño que queda (el PDF se lee completo en memoria). Generá una copia más liviana o dividila y volvé a cargarla; no reemplaces objetos manualmente.
+- **Más de 50 MiB:** es el único límite de tamaño que queda (el PDF se lee completo en memoria; el valor sale de `MAX_PDF_MIB`). Generá una copia más liviana o dividila y volvé a cargarla; no reemplaces objetos manualmente.
 - **La carga tarda varios minutos:** es esperable para documentos largos (alrededor de 1,2 s por fragmento con las 2 CPU del `uploader`). Mirá el texto de progreso debajo del botón **Cargar PDF**: mientras avance (`Indexando fragmento N de total…`), la carga sigue en curso, no está colgada.
 - **PDF cifrado:** trabajá sobre una copia descifrada autorizada y sin información sensible; el original se rechaza antes de almacenar o indexar.
 - **`429` o `503`:** esperá a que termine la única ingesta activa; verificá `docker compose --env-file .env -f compose.yaml ps` y reintentá una vez. No envíes cargas en bucle.
@@ -764,26 +795,26 @@ Los tests inyectan respuestas simuladas de OpenRouter y prueban recuperación, S
 docker compose --env-file .env -f compose.yaml run --rm --entrypoint pytest loader -q
 ```
 
-La ejecución normal observada termina con **155 aprobados, 1 omitido opcional y 2 warnings de dependencias upstream**. El único test omitido consulta el catálogo del volumen actual en modo de sólo lectura. Para incluirlo explícitamente:
+La ejecución normal observada termina con **194 aprobados, 1 omitido opcional y 2 warnings de dependencias upstream**. El único test omitido consulta el catálogo del volumen actual en modo de sólo lectura. Para incluirlo explícitamente:
 
 ```bash
 docker compose --env-file .env -f compose.yaml run --rm \
   -e RUN_LIVE_SEED_CATALOG_CHECK=1 --entrypoint pytest loader -q
 ```
 
-La ejecución opt-in observada termina con **156 aprobados** y los mismos 2 warnings upstream. El éxito demuestra las fronteras programadas, no la calidad universal de un modelo remoto. Sí se verificó una inicialización desde volumen fresco (proyecto Docker Compose descartable, puertos distintos, nunca `down -v` sobre el volumen de este recorrido); la sección 11 resume las mediciones.
+La ejecución opt-in observada termina con **195 aprobados** y los mismos 2 warnings upstream. El éxito demuestra las fronteras programadas, no la calidad universal de un modelo remoto. Sí se verificó una inicialización desde volumen fresco (proyecto Docker Compose descartable, puertos distintos, nunca `down -v` sobre el volumen de este recorrido); la sección 11 resume las mediciones.
 
 ## Solución de problemas
 
 | Síntoma | Diagnóstico seguro | Recuperación |
 | --- | --- | --- |
-| `port is already allocated` | El puerto local 5436, 6379, 18333 u 8006 ya está ocupado. | Detené el proceso conflictivo; no cambies ni borres otros contenedores. |
+| `port is already allocated` | El puerto local 5436, 6379, 18333 u 8006 (`APP_PORT`) ya está ocupado. | Detené el proceso conflictivo; no cambies ni borres otros contenedores. |
 | PostgreSQL no queda saludable | Las tres extensiones deben existir juntas en la imagen fijada. | Revisá `docker compose --env-file .env -f compose.yaml ps` y los logs de `postgres`; no sustituyas silenciosamente una extensión. |
 | Redis devuelve `-2` para TTL | La clave canónica expiró o no fue cargada. | Repetí `run --rm loader`; reconstruye desde PostgreSQL y restaura TTL 3600. |
 | No hay chunks | Falta el PDF disponible o la indexación inicial. | Para el manual, ejecutá loader y luego `loader.ingest_vectors`; para una carga, revisá `uploader` y reintentá los mismos bytes. |
 | La primera indexación o carga tarda | bge-m3 se está descargando o procesando en CPU dentro del límite del servicio. | Esperá y comprobá conectividad, espacio y salud; no cambies a una imagen GPU ni amplíes límites sin medir. |
 | La carga devuelve `422` | El archivo no es PDF válido, está cifrado, no tiene texto extraíble o supera páginas/caracteres/chunks. | Corregí una copia autorizada según el mensaje y reintentá; no fuerces la extensión ni los límites. |
-| La carga devuelve `413` | El cuerpo supera 50 MiB, incluso si faltaba `Content-Length`. | Generá una copia de hasta 50 MiB; no la comprimas o trunques de forma que pierda legibilidad. |
+| La carga devuelve `413` | El cuerpo supera `MAX_PDF_MIB` (50 MiB por defecto), incluso si faltaba `Content-Length`. | Generá una copia dentro del límite; no la comprimas o trunques de forma que pierda legibilidad. |
 | La carga devuelve `429` | Otra ingesta mantiene la compuerta interna. | Esperá a que termine y reintentá una vez; no paralelices cargas. |
 | Catálogo o carga devuelve `503` | PostgreSQL, S3 o `uploader` no está disponible; el detalle interno fue sanitizado. | Consultá `compose ps` y logs del servicio afectado sin imprimir variables ni configuración expandida. |
 | El mismo PDF conserva el título anterior | La identidad depende de los bytes y la carga duplicada es idempotente. | Es el comportamiento esperado; no hay reemplazo. Cambiá el contenido sólo si realmente es otro documento. |
@@ -837,5 +868,5 @@ docker compose --env-file .env -f compose.yaml up -d --build --wait
 - [ ] Se comprendieron costo, privacidad, prompt injection, posibles errores del modelo y que el corte `0.55` no es universal.
 - [ ] Un reinicio conserva identidad y chunks; no se confunde esa prueba con una inicialización en volumen fresco.
 - [ ] Un documento en inglés consultado en español recupera el chunk correcto (sección 11); se entiende que el corte `0.55` fue calibrado con esa mezcla, no es garantía universal.
-- [ ] La suite normal informa 155 aprobados/1 omitido opcional y la opt-in 156 aprobados; ambos casos conservan 2 warnings upstream.
+- [ ] La suite normal informa 194 aprobados/1 omitido opcional y la opt-in 195 aprobados; ambos casos conservan 2 warnings upstream.
 - [ ] El cierre usa `down` sin `-v`.

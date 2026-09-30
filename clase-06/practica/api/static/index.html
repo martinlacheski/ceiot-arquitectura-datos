@@ -45,7 +45,7 @@
       <label for="pdf-file">Documento PDF
         <input id="pdf-file" name="pdf" type="file" accept=".pdf,application/pdf" aria-describedby="pdf-help" required>
       </label>
-      <p id="pdf-help" class="note">Máximo 50 MiB (el PDF se lee completo en memoria); el navegador hace una comprobación temprana, pero el servidor conserva la autoridad. Sin límite de páginas ni de fragmentos: la cantidad de fragmentos crece con el documento. La indexación tarda alrededor de 1,2 segundos por fragmento; un datasheet de unas 50 páginas tarda cerca de 2 minutos. Se admite sólo texto extraíble, no se realiza OCR y se rechazan PDF cifrados. Mostramos el progreso mientras se indexa.</p>
+      <p id="pdf-help" class="note">Máximo {{MAX_PDF_MIB}} MiB (el PDF se lee completo en memoria); el navegador hace una comprobación temprana, pero el servidor conserva la autoridad. Sin límite de páginas ni de fragmentos: la cantidad de fragmentos crece con el documento. La indexación tarda alrededor de 1,2 segundos por fragmento; un datasheet de unas 50 páginas tarda cerca de 2 minutos. Se admite sólo texto extraíble, no se realiza OCR y se rechazan PDF cifrados. Mostramos el progreso mientras se indexa.</p>
       <button id="upload-submit" type="submit">Cargar PDF</button>
       <p id="upload-status" role="status" aria-live="polite"></p>
       <p id="upload-progress" role="status" aria-live="polite"></p>
@@ -104,8 +104,8 @@
           <button class="example" type="button" data-mode="integrated" data-manual-seed="true" data-question="El sensor ENV-X del Aula 204 presenta mediciones anómalas. ¿Cuáles fueron sus valores promedio durante las últimas 24 horas y qué procedimiento de calibración indica su manual?">Integrado (mediciones y manual inicial) · El sensor ENV-X del Aula 204 presenta mediciones anómalas. ¿Cuáles fueron sus valores promedio durante las últimas 24 horas y qué procedimiento de calibración indica su manual?</button>
         </div>
       </details>
-      <label for="top-k">Cantidad máxima de fragmentos (1–4)
-        <input id="top-k" name="top_k" type="number" min="1" max="4" value="4" required>
+      <label for="top-k">Cantidad máxima de fragmentos (1–{{MAX_TOP_K}})
+        <input id="top-k" name="top_k" type="number" min="1" max="{{MAX_TOP_K}}" value="{{DEFAULT_TOP_K}}" required>
       </label>
       <button id="submit" type="submit">Consultar</button>
       <p class="note">Las llamadas a OpenRouter pueden tener costo. El corte de evidencia es aproximado (0,55): se calibró empíricamente para BAAI/bge-m3 con el manual inicial y no es universal para otros PDF.</p>
@@ -133,7 +133,7 @@
   </section>
 </main>
 <script>
-  const MAX_PDF_BYTES = 52428800;
+  const MAX_PDF_BYTES = {{MAX_PDF_BYTES}};
   const UPLOAD_STAGE_LABELS = {
     pdf_validated: 'PDF validado',
     chunks_embedded: 'Generando embeddings',
@@ -347,7 +347,7 @@
     const file = document.querySelector('#pdf-file').files[0];
     if (!file) return;
     if (file.size > MAX_PDF_BYTES) {
-      uploadError.textContent = 'El PDF supera el límite de 50 MiB.';
+      uploadError.textContent = 'El PDF supera el límite de {{MAX_PDF_MIB}} MiB.';
       uploadError.hidden = false;
       return;
     }
@@ -372,7 +372,7 @@
       if (!response.ok) {
         const payload = await readJson(response);
         const fallbackByStatus = {
-          413: 'El PDF supera el límite de 50 MiB.',
+          413: 'El PDF supera el límite de {{MAX_PDF_MIB}} MiB.',
           422: 'El PDF no pudo ser procesado.',
           429: 'Ya hay una carga en proceso; intentá nuevamente más tarde.',
           503: 'La carga no está disponible temporalmente.'

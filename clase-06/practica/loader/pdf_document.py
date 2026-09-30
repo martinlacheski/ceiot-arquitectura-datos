@@ -11,12 +11,17 @@ from dataclasses import dataclass
 from pypdf import PdfReader  # type: ignore[import-not-found]
 
 # Single remaining cap: the PDF is read fully into memory (app proxy, uploader
-# and parser all agree on this value; see also the DB CHECK in
-# postgres/init/05-document-upload.sql). Page count, per-page/total extracted
-# characters and chunk count are unbounded: chunks scale with the document.
-MAX_PDF_BYTES = 50 * 1024 * 1024
-MAX_CHUNK_CHARS = 1_200
-CHUNK_OVERLAP_CHARS = 150
+# and parser all read the same MAX_PDF_MIB; the application is the only place
+# that enforces it). Page count, per-page/total extracted characters and chunk
+# count are unbounded: chunks scale with the document. Values come from the
+# environment (see shared/document_limits.py).
+from shared.document_limits import (
+    CHUNK_OVERLAP_CHARS,
+    MAX_CHUNK_CHARS,
+    MAX_PDF_BYTES,
+    MAX_PDF_MIB,
+)
+
 MAX_TITLE_CHARS = 200
 
 
@@ -155,7 +160,7 @@ def parse_document(pdf_bytes: bytes, title: str, content_type: str) -> ParsedDoc
 
     byte_count = len(pdf_bytes)
     if not 1 <= byte_count <= MAX_PDF_BYTES:
-        raise PDFRejected("El PDF debe contener entre 1 byte y 50 MiB.")
+        raise PDFRejected(f"El PDF debe contener entre 1 byte y {MAX_PDF_MIB} MiB.")
     if not pdf_bytes.startswith(b"%PDF"):
         raise PDFRejected("El archivo no tiene la firma de un PDF válido.")
 
