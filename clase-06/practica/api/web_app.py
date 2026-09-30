@@ -89,8 +89,8 @@ class UploadSummary(BaseModel):
     page_count: int = Field(ge=1, le=20)
     extracted_char_count: int = Field(ge=1, le=200_000)
     chunk_count: int = Field(ge=1, le=120)
-    embedding_model: Literal["intfloat/multilingual-e5-small"]
-    dimension: Literal[384]
+    embedding_model: Literal["BAAI/bge-m3"]
+    dimension: Literal[1024]
     index_status: Literal["indexed"]
     embedding_preview: list[float] = Field(min_length=6, max_length=6)
     trace: list[str] = Field(min_length=5, max_length=5)

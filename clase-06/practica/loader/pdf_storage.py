@@ -20,7 +20,7 @@ from loader.pdf_document import (
     parse_document,
     passage_text,
 )
-from shared.e5 import (
+from shared.embeddings import (
     EXPECTED_DIMENSION,
     MODEL_NAME,
     embedding_model,

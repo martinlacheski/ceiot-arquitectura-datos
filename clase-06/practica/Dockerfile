@@ -8,11 +8,13 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 COPY requirements.txt ./
-# Keep the local E5 embedding runtime CPU-only. Installing this official wheel
+# Keep the local embedding runtime CPU-only. Installing this official wheel
 # first prevents sentence-transformers from resolving PyTorch's CUDA packages.
+# BAAI/bge-m3 only ships .bin (pickle) weights; transformers refuses to load
+# them below torch 2.6 (CVE-2025-32434), so this practice is pinned to 2.6.0.
 RUN pip install --no-cache-dir \
         --index-url https://download.pytorch.org/whl/cpu \
-        "torch==2.5.1+cpu" \
+        "torch==2.6.0+cpu" \
     && pip install --no-cache-dir --requirement requirements.txt
 
 COPY api ./api

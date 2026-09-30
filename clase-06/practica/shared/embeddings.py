@@ -1,4 +1,4 @@
-"""Configuración y helpers compartidos del modelo E5 local."""
+"""Configuración y helpers compartidos del modelo de embeddings local."""
 
 from __future__ import annotations
 
@@ -9,8 +9,8 @@ from typing import Any
 
 from sentence_transformers import SentenceTransformer  # type: ignore[import-not-found]
 
-MODEL_NAME = "intfloat/multilingual-e5-small"
-EXPECTED_DIMENSION = 384
+MODEL_NAME = "BAAI/bge-m3"
+EXPECTED_DIMENSION = 1024
 
 
 def model_dimension(model: Any) -> int:
@@ -34,7 +34,9 @@ def vector_literal(values: Iterable[float]) -> str:
 
 
 def query_text(question: str) -> str:
-    return f"query: {question.strip()}"
+    """bge-m3 no usa prefijos E5: el texto de consulta se envía tal cual."""
+
+    return question.strip()
 
 
 @lru_cache(maxsize=1)

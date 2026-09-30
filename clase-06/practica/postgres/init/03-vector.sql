@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS manual_chunks (
     content text NOT NULL CHECK (btrim(content) <> ''),
     object_key text NOT NULL,
     embedding_model text NOT NULL,
-    embedding vector(384) NOT NULL,
+    embedding vector(1024) NOT NULL,
     content_sha256 text NOT NULL CHECK (content_sha256 ~ '^[0-9a-f]{64}$'),
     indexed_at timestamptz NOT NULL DEFAULT now(),
     PRIMARY KEY (document_id, version, chunk_index),
@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS manual_chunks (
         FOREIGN KEY (object_key)
         REFERENCES manual_documents (object_key),
     CONSTRAINT manual_chunks_embedding_dimensions
-        CHECK (vector_dims(embedding) = 384)
+        CHECK (vector_dims(embedding) = 1024)
 );
 
 CREATE INDEX IF NOT EXISTS manual_chunks_document_idx

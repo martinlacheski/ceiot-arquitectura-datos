@@ -14,7 +14,7 @@ from loader.pdf_document import (  # type: ignore[import-not-found]
     PageChunk,
     ParsedDocument,
 )
-from shared.e5 import EXPECTED_DIMENSION, MODEL_NAME  # type: ignore[import-not-found]
+from shared.embeddings import EXPECTED_DIMENSION, MODEL_NAME  # type: ignore[import-not-found]
 
 
 PDF_BYTES = b"%PDF synthetic storage test"
@@ -223,7 +223,7 @@ def test_ingest_returns_safe_summary_and_orders_verified_s3_before_database(
         "db_cursor",
     ]
     assert model.normalize_embeddings is True
-    assert all(text.startswith("passage: ") for text in model.inputs)
+    assert all(not text.startswith("passage:") for text in model.inputs)
     assert s3.last_body is not None and s3.last_body.closed_by_loader
     assert connection.commits == 1
     assert connection.rollbacks == 0
@@ -238,7 +238,7 @@ def test_ingest_returns_safe_summary_and_orders_verified_s3_before_database(
         "extracted_char_count": document.extracted_char_count,
         "chunk_count": 2,
         "embedding_model": MODEL_NAME,
-        "dimension": 384,
+        "dimension": 1024,
         "index_status": "indexed",
         "embedding_preview": [dimension / 1000 for dimension in range(6)],
         "trace": [
@@ -447,7 +447,7 @@ def test_embedding_shape_and_document_id_collision_fail_safely(
     s3 = _S3(events)
     connection = _Connection(events)
     _install_dependencies(monkeypatch, document, model, s3, connection)
-    model.encode = lambda *_args, **_kwargs: [[0.0] * 383 for _ in document.chunks]  # type: ignore[method-assign]
+    model.encode = lambda *_args, **_kwargs: [[0.0] * (EXPECTED_DIMENSION - 1) for _ in document.chunks]  # type: ignore[method-assign]
 
     with pytest.raises(pdf_storage.UploadUnavailable):
         pdf_storage.ingest_document(PDF_BYTES, "Informe", "application/pdf")

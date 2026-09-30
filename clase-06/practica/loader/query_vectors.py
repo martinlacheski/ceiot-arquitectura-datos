@@ -8,7 +8,7 @@ import os
 from typing import Any
 
 from loader.ingest_vectors import postgres_connection
-from shared.e5 import (  # type: ignore[import-not-found]
+from shared.embeddings import (  # type: ignore[import-not-found]
     MODEL_NAME,
     embedding_model,
     query_text,

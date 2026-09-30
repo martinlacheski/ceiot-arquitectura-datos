@@ -273,7 +273,7 @@ def test_seeded_manual_metadata_matches_its_stored_chunks() -> None:
     assert (sha256, byte_count, page_count) == (None, None, None)
     assert index_status == "indexed"
     assert chunk_count == 4
-    assert embedding_model == "intfloat/multilingual-e5-small"
+    assert embedding_model == "BAAI/bge-m3"
     assert chunk_join_count == 4
     assert distinct_chunk_models == 1
-    assert min_chunk_model == "intfloat/multilingual-e5-small"
+    assert min_chunk_model == "BAAI/bge-m3"

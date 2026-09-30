@@ -330,7 +330,7 @@ def test_integrated_orchestrator_routes_telemetry_only_without_manual_retrieval(
     assert [source["type"] for source in response["sources"]] == ["telemetry"]
     assert len(chat.calls) == 2
     assert "sin-evidencia-manual" in response["trace"]
-    assert "modelo-e5-local" not in response["trace"]
+    assert "modelo-embeddings-local" not in response["trace"]
 
 
 def test_integrated_orchestrator_routes_manual_only_without_sql_generation(
@@ -582,7 +582,7 @@ def test_database_and_model_failures_become_sanitized_503(
 
     class WorkingModel:
         def encode(self, *_args: Any, **_kwargs: Any) -> list[float]:
-            return [0.0] * 384
+            return [0.0] * 1024
 
     def fail_connect(**_kwargs: Any) -> Any:
         raise psycopg.OperationalError("host=private password=supersecret timeout")

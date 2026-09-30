@@ -40,7 +40,7 @@
 
   <section class="panel" aria-labelledby="upload-title">
     <h2 id="upload-title">Cargar e inspeccionar un PDF</h2>
-    <p class="note">La carga y la inspección son locales. Sólo una pregunta posterior a la IA puede enviar a OpenRouter fragmentos recuperados del PDF. Las llamadas al modelo pueden tener costo; el umbral aproximado 0,20 fue calibrado para este laboratorio y no es universal.</p>
+    <p class="note">La carga y la inspección son locales. Sólo una pregunta posterior a la IA puede enviar a OpenRouter fragmentos recuperados del PDF. Las llamadas al modelo pueden tener costo; el umbral aproximado 0,55 fue calibrado para este laboratorio con BAAI/bge-m3 y no es universal.</p>
     <form id="upload-form">
       <label for="pdf-file">Documento PDF
         <input id="pdf-file" name="pdf" type="file" accept=".pdf,application/pdf" aria-describedby="pdf-help" required>
@@ -107,7 +107,7 @@
         <input id="top-k" name="top_k" type="number" min="1" max="4" value="4" required>
       </label>
       <button id="submit" type="submit">Consultar</button>
-      <p class="note">Las llamadas a OpenRouter pueden tener costo. El corte de evidencia es aproximado (0,20): se calibró sólo con el manual inicial y no es universal para otros PDF.</p>
+      <p class="note">Las llamadas a OpenRouter pueden tener costo. El corte de evidencia es aproximado (0,55): se calibró empíricamente para BAAI/bge-m3 con el manual inicial y no es universal para otros PDF.</p>
       <p id="status" role="status" aria-live="polite"></p>
       <p id="error" class="error" role="alert" hidden></p>
     </form>
@@ -135,9 +135,9 @@
   const MAX_PDF_BYTES = 10485760;
   const MANUAL_SEED_DOCUMENT_ID = "env-x-manual";
   const MODE_GUIDES = {
-    rag: 'Busca con E5 local en el manual o PDF seleccionado (o en todos) y muestra la fuente con página, fragmento y distancia. OpenRouter sintetiza la respuesta sólo si encuentra fragmentos.',
+    rag: 'Busca con el modelo de embeddings local (BAAI/bge-m3) en el manual o PDF seleccionado (o en todos) y muestra la fuente con página, fragmento y distancia. OpenRouter sintetiza la respuesta sólo si encuentra fragmentos.',
     'text-to-sql': 'OpenRouter genera una consulta SQL; el guard de seguridad la valida y la ejecuta sobre las vistas lab_read con un rol de sólo lectura. Muestra el SQL validado y las filas. Este modo ignora los PDF, el documento elegido y la cantidad de fragmentos.',
-    integrated: 'Primero ejecuta SQL protegido de sólo lectura sobre la telemetría; después busca con E5 en el documento seleccionado o en todos. Si encuentra fragmentos, OpenRouter sintetiza ambas evidencias y puede ser una segunda llamada al proveedor. Muestra SQL, filas y cada fuente documental con página, fragmento y distancia; sin evidencia de PDF no atribuye respaldo al documento.'
+    integrated: 'Primero ejecuta SQL protegido de sólo lectura sobre la telemetría; después busca con el modelo de embeddings local en el documento seleccionado o en todos. Si encuentra fragmentos, OpenRouter sintetiza ambas evidencias y puede ser una segunda llamada al proveedor. Muestra SQL, filas y cada fuente documental con página, fragmento y distancia; sin evidencia de PDF no atribuye respaldo al documento.'
   };
   const MODE_COST_NOTE = ' Cambiar esta selección no envía ninguna consulta. Sólo Consultar puede contactar a OpenRouter y generar costo.';
   const form = document.querySelector('#query-form');

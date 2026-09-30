@@ -8,7 +8,7 @@ from typing import Any
 import psycopg  # type: ignore[import-not-found]
 
 from api.openrouter_client import OpenRouterClient  # type: ignore[import-not-found]
-from shared.e5 import (  # type: ignore[import-not-found]
+from shared.embeddings import (  # type: ignore[import-not-found]
     embedding_model,
     query_text,
     vector_literal,
@@ -179,7 +179,7 @@ def run_rag(
             "sql": None,
             "rows": [],
             "sources": [],
-            "trace": ["modelo-e5-local", "recuperación-pgvector-sin-resultados"],
+            "trace": ["modelo-embeddings-local", "recuperación-pgvector-sin-resultados"],
         }
     chat = client or OpenRouterClient()
     answer = chat.chat(
@@ -201,7 +201,7 @@ def run_rag(
         "sql": None,
         "rows": [],
         "sources": sources,
-        "trace": ["modelo-e5-local", f"pgvector-top-{len(chunks)}", "openrouter-rag"],
+        "trace": ["modelo-embeddings-local", f"pgvector-top-{len(chunks)}", "openrouter-rag"],
     }
 
 
@@ -344,7 +344,7 @@ def run_integrated(
             chunks = retrieve_manual(manual_question, top_k)
         else:
             chunks = retrieve_manual(manual_question, top_k, document_id=document_id)
-        trace += ["modelo-e5-local", f"pgvector-top-{len(chunks)}"]
+        trace += ["modelo-embeddings-local", f"pgvector-top-{len(chunks)}"]
 
     rows = list(result.rows) if result is not None else []
     sql = validated.sql if validated is not None else None

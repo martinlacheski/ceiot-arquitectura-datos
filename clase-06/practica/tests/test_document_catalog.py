@@ -20,7 +20,7 @@ DOCUMENT_ROW = {
     "object_key": f"uploads/{DOCUMENT_ID}/v1/report.pdf",
     "pages": 2,
     "chunk_count": 2,
-    "model": "intfloat/multilingual-e5-small",
+    "model": "BAAI/bge-m3",
     "sha": "a" * 64,
     "bytes": 4096,
     "status": "indexed",
@@ -145,7 +145,7 @@ def test_list_documents_returns_exact_bounded_inventory(
             "object_key": DOCUMENT_ROW["object_key"],
             "pages": 2,
             "chunk_count": 2,
-            "model": "intfloat/multilingual-e5-small",
+            "model": "BAAI/bge-m3",
             "sha": "a" * 64,
             "bytes": 4096,
             "status": "indexed",
@@ -163,7 +163,7 @@ def test_list_documents_returns_exact_bounded_inventory(
 def test_document_details_returns_ordered_bounded_chunks_and_six_float_preview(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    vector = "[" + ",".join(str(index / 1000) for index in range(384)) + "]"
+    vector = "[" + ",".join(str(index / 1000) for index in range(1024)) + "]"
     chunk_rows = [
         {
             "chunk_index": index,
@@ -171,7 +171,7 @@ def test_document_details_returns_ordered_bounded_chunks_and_six_float_preview(
             "section": f"Página {index + 1}",
             "content": f"Contenido {index + 1}",
             "content_sha256": str(index) * 64,
-            "vector_dims": 384,
+            "vector_dims": 1024,
             "embedding_text": vector,
         }
         for index in range(2)
@@ -201,7 +201,7 @@ def test_document_details_returns_ordered_bounded_chunks_and_six_float_preview(
         "section": "Página 1",
         "content": "Contenido 1",
         "content_sha256": "0" * 64,
-        "vector_dims": 384,
+        "vector_dims": 1024,
         "embedding_preview": [0.0, 0.001, 0.002, 0.003, 0.004, 0.005],
     }
     assert all("embedding_text" not in chunk for chunk in result["chunks"])
@@ -212,7 +212,7 @@ def test_document_details_returns_ordered_bounded_chunks_and_six_float_preview(
     assert "ORDER BY chunk.chunk_index LIMIT %s" in chunks_sql
     assert "left(chunk.content, 1200)" in chunks_sql
     assert "chunk.embedding::text" in chunks_sql
-    assert "vector_dims(chunk.embedding) = 384" in chunks_sql
+    assert "vector_dims(chunk.embedding) = 1024" in chunks_sql
     assert chunks_params == (DOCUMENT_ID, 1, "available", "indexed", 120)
 
 

@@ -68,7 +68,7 @@ def test_upload_summary_sources_and_privacy_contract_are_visible() -> None:
     assert "fragmentos recuperados del PDF" in html
     assert "OpenRouter" in html
     assert "corte de evidencia es aproximado" in html
-    assert "0,20" in html and "manual inicial" in html and "no es universal" in html
+    assert "0,55" in html and "manual inicial" in html and "no es universal" in html
     assert "S3" not in html or "navegador" in html
 
 
@@ -163,7 +163,7 @@ def test_query_modes_use_plain_language_labels_and_an_accessible_live_guide() ->
 def test_each_query_mode_has_an_honest_contextual_explanation() -> None:
     html = INDEX_HTML
 
-    assert "E5 local" in html
+    assert "modelo de embeddings local" in html
     assert "página, fragmento y distancia" in html
     assert "sólo si encuentra fragmentos" in html
     assert "OpenRouter genera una consulta SQL" in html
@@ -171,7 +171,7 @@ def test_each_query_mode_has_an_honest_contextual_explanation() -> None:
     assert "vistas lab_read con un rol de sólo lectura" in html
     assert "ignora los PDF, el documento elegido y la cantidad de fragmentos" in html
     assert "Primero ejecuta SQL protegido" in html
-    assert "después busca con E5" in html
+    assert "después busca con el modelo de embeddings local" in html
     assert "puede ser una segunda llamada al proveedor" in html
     assert "sin evidencia de PDF no atribuye respaldo al documento" in html
     assert "Cambiar esta selección no envía ninguna consulta" in html

@@ -31,8 +31,8 @@ SUMMARY = {
     "page_count": 2,
     "extracted_char_count": 321,
     "chunk_count": 3,
-    "embedding_model": "intfloat/multilingual-e5-small",
-    "dimension": 384,
+    "embedding_model": "BAAI/bge-m3",
+    "dimension": 1024,
     "index_status": "indexed",
     "embedding_preview": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6],
     "trace": [

@@ -1,8 +1,10 @@
 # Práctica autónoma de especialización e IA sobre datos IoT
 
-Esta práctica conecta TimescaleDB, PostGIS, Redis, SeaweedFS S3, carga de PDF, embeddings E5, pgvector, RAG y Text-to-SQL en un caso pequeño con dos dispositivos protagonistas: el sensor ambiental `AMB-001` (modelo `ENV-X`) en el **Aula 204**, cuyo manual describe la recalibración tras reemplazar la batería, y el sensor de calidad de aire `AIR-002` en el Laboratorio 101. Un tercer dispositivo `ENV-X` (`AMB-005`) vive en Ciudad Universitaria, a unos 10 km, y sirve para probar proximidad geográfica. Todo el recorrido está resuelto y es no evaluativo. Primero ejecutá el camino rápido; después observá cada tecnología de forma nativa con el ritmo **comando → observable esperado → interpretación → variación segura → recuperación**.
+Esta práctica conecta TimescaleDB, PostGIS, Redis, SeaweedFS S3, carga de PDF, embeddings locales con `BAAI/bge-m3`, pgvector, RAG y Text-to-SQL en un caso pequeño con dos dispositivos protagonistas: el sensor ambiental `AMB-001` (modelo `ENV-X`) en el **Aula 204**, cuyo manual describe la recalibración tras reemplazar la batería, y el sensor de calidad de aire `AIR-002` en el Laboratorio 101. Un tercer dispositivo `ENV-X` (`AMB-005`) vive en Ciudad Universitaria, a unos 10 km, y sirve para probar proximidad geográfica. Todo el recorrido está resuelto y es no evaluativo. Primero ejecutá el camino rápido; después observá cada tecnología de forma nativa con el ritmo **comando → observable esperado → interpretación → variación segura → recuperación**.
 
-PostgreSQL conserva la verdad base; Redis mantiene una proyección temporal del último estado; SeaweedFS conserva tanto el manual inicial como cada PDF cargado; pgvector indexa fragmentos derivados para recuperarlos por similitud. La aplicación pública consulta con `ai_readonly` y `rag_readonly`: no recibe credenciales de escritura. Sólo conserva la clave de OpenRouter para una consulta posterior. La escritura queda aislada en el servicio interno no publicado `uploader`, que usa exclusivamente `rag_ingest`, no recibe la clave de OpenRouter ni credenciales de propietario y está limitado a 2 GiB, 2 CPU y 256 procesos.
+> **Cambio de modelo de embeddings:** esta práctica migró de `intfloat/multilingual-e5-small` (384 dimensiones, con prefijos `query:`/`passage:`) a `BAAI/bge-m3` (1024 dimensiones, sin prefijos) para poder consultar en español manuales escritos en inglés — un caso real de aula. La sección 11 muestra esa demostración cruzada de idioma.
+
+PostgreSQL conserva la verdad base; Redis mantiene una proyección temporal del último estado; SeaweedFS conserva tanto el manual inicial como cada PDF cargado; pgvector indexa fragmentos derivados para recuperarlos por similitud. La aplicación pública consulta con `ai_readonly` y `rag_readonly`: no recibe credenciales de escritura. Sólo conserva la clave de OpenRouter para una consulta posterior. La escritura queda aislada en el servicio interno no publicado `uploader`, que usa exclusivamente `rag_ingest`, no recibe la clave de OpenRouter ni credenciales de propietario y está limitado a 4 GiB, 2 CPU y 256 procesos.
 
 ## Camino rápido
 
@@ -26,10 +28,17 @@ cd clase-06/practica
    docker compose --env-file .env -f compose.yaml up -d --build --wait
    ```
 
-3. Sobre un volumen existente creado antes de esta alineación, aplicá primero la evolución idempotente que agrega ubicaciones geográficas (podés repetirla sin riesgo; también corre sola en un volumen fresco):
+3. Sobre un volumen existente creado antes de esta alineación, aplicá primero las evoluciones idempotentes que agregan ubicaciones geográficas y migran los embeddings a `BAAI/bge-m3` (podés repetirlas sin riesgo; también corren solas, sin efecto, en un volumen fresco):
 
    ```bash
    docker compose --env-file .env -f compose.yaml exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1' < postgres/init/06-locations.sql
+   docker compose --env-file .env -f compose.yaml exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1' < postgres/init/08-bge-m3-migration.sql
+   ```
+
+   La migración de embeddings descarta los chunks de 384 dimensiones (incompatibles con el modelo nuevo) y deja esos documentos en `index_status='pending'`. El manual semilla se reindexa en el paso 6; los PDF que hayas cargado antes por la UI se reindexan reutilizando los mismos bytes ya almacenados en SeaweedFS:
+
+   ```bash
+   docker compose --env-file .env -f compose.yaml run --rm --entrypoint python loader -m loader.reindex_documents
    ```
 
 4. Cargá las ubicaciones, los dispositivos y el historial de mediciones:
@@ -48,7 +57,7 @@ cd clase-06/practica
 
    La salida confirma el bucket y la clave, `PDF=2 páginas`, una huella SHA-256 y un TTL de Redis cercano a `3600s`.
 
-6. Descargá E5 la primera vez e indexá los cuatro fragmentos:
+6. Descargá `BAAI/bge-m3` la primera vez e indexá los cuatro fragmentos:
 
    ```bash
    docker compose --env-file .env -f compose.yaml run --rm --entrypoint python loader -m loader.ingest_vectors
@@ -62,9 +71,9 @@ cd clase-06/practica
    curl --fail http://127.0.0.1:8006/health
    ```
 
-   Debe responder `{"status":"ok"}`. La salud de la API no prueba la clave, no carga E5 y no llama a OpenRouter.
+   Debe responder `{"status":"ok"}`. La salud de la API no prueba la clave, no carga bge-m3 y no llama a OpenRouter.
 
-> **Dependencias cronológicas:** PostgreSQL debe estar saludable antes del seed; el loader necesita ese seed para construir Redis y necesita SeaweedFS para publicar el PDF; la indexación E5 necesita que el loader haya dejado el manual como `available`; RAG necesita los chunks; Text-to-SQL necesita el seed. Text-to-SQL e integrado necesitan una clave local válida. RAG la necesita únicamente cuando recupera evidencia y debe generar una respuesta; sin fragmentos relevantes devuelve una respuesta determinista sin llamar a OpenRouter.
+> **Dependencias cronológicas:** PostgreSQL debe estar saludable antes del seed; el loader necesita ese seed para construir Redis y necesita SeaweedFS para publicar el PDF; la indexación bge-m3 necesita que el loader haya dejado el manual como `available`; RAG necesita los chunks; Text-to-SQL necesita el seed. Text-to-SQL e integrado necesitan una clave local válida. RAG la necesita únicamente cuando recupera evidencia y debe generar una respuesta; sin fragmentos relevantes devuelve una respuesta determinista sin llamar a OpenRouter.
 
 ## Antes de usar IA en vivo
 
@@ -86,7 +95,7 @@ app/ FastAPI + UI ── OpenRouter (sólo al preguntar con IA)
    │          │       └── documentos/chunks como rag_readonly
    │          └── proxy de bytes PDF ──► uploader:8007 (sólo red interna)
    │                                      ├── valida y fragmenta
-   │                                      ├── E5 passage: en CPU
+   │                                      ├── bge-m3 (sin prefijos) en CPU
    │                                      ├── original → SeaweedFS S3
    │                                      └── metadatos/vectores → PostgreSQL como rag_ingest
    ▼
@@ -98,7 +107,8 @@ PostgreSQL 17
 loader/
   ├── data/manual-content.json → PDF inicial → SeaweedFS S3
   ├── PostgreSQL → última lectura → Redis con TTL
-  └── PDF inicial desde S3 → E5 local → pgvector
+  ├── PDF inicial desde S3 → bge-m3 local → pgvector
+  └── reindex_documents.py → PDF ya cargados desde S3 → bge-m3 local → pgvector
 ```
 
 | Componente | Responsabilidad |
@@ -106,8 +116,8 @@ loader/
 | [`compose.yaml`](compose.yaml) | Servicios, salud, red local, volúmenes y roles de la demo |
 | [`Dockerfile`](Dockerfile) | Una imagen Python CPU compartida por `loader` y `app` |
 | [`api/`](api/) | FastAPI, proxy público de carga sin credenciales de escritura, catálogo, cliente OpenRouter, flujos RAG/SQL/integrado y HTML mínimo |
-| [`loader/`](loader/) | Creación y verificación del PDF inicial, proyección Redis, ingestión vectorial y servicio interno `uploader` |
-| [`shared/`](shared/) | E5, recuperación pgvector, validación SQL y ejecución restringida |
+| [`loader/`](loader/) | Creación y verificación del PDF inicial, proyección Redis, ingestión vectorial, reindexación de PDF cargados y servicio interno `uploader` |
+| [`shared/`](shared/) | Embeddings locales (`bge-m3`), recuperación pgvector, validación SQL y ejecución restringida |
 | [`postgres/init/`](postgres/init/) | Extensiones, tablas, roles y vistas de sólo lectura |
 | [`postgres/seed/01-iot.sql`](postgres/seed/01-iot.sql) | Tres dispositivos, ocho mediciones y registro versionado del manual |
 | [`postgres/examples/`](postgres/examples/) | Consultas nativas temporales, espaciales y vectoriales |
@@ -119,11 +129,11 @@ loader/
 | Requisito o recurso | Referencia para esta práctica |
 | --- | --- |
 | Herramientas | Docker con Docker Compose v2 (`docker compose`) y `curl` |
-| Imagen compartida | CPU-only; tamaño observado aproximado de **1,94 GB** |
-| Disco para Docker | Recomendación estimada: alrededor de **6 GB libres** para imágenes, volúmenes y caché; no es un mínimo verificado |
-| Memoria | Recomendación estimada: alrededor de **6 GB de RAM disponibles**; no es un mínimo verificado |
-| Primera indexación | Descarga `intfloat/multilingual-e5-small`; el tiempo depende de la red y luego se reutiliza `embedding_model_cache` |
-| Acceso externo | E5 necesita Internet sólo para su primera descarga; OpenRouter se usa únicamente en consultas de IA en vivo |
+| Imagen compartida | CPU-only, con `torch==2.6.0+cpu`; tamaño observado aproximado de **1,99 GB** |
+| Disco para Docker | `BAAI/bge-m3` midió **4,3 GB** reales en `embedding_model_cache` en esta corrida: sentence-transformers 3.3.1 descarga los pesos en dos formatos (`pytorch_model.bin` y `model.safetensors`, ~2,1 GB cada uno) porque el repo publica ambos y no encontramos una forma simple y robusta de restringir la descarga a uno solo sin tocar el código vendorizado; sumado a imágenes y volúmenes, recomendación estimada de **10 GB libres**; no es un mínimo verificado |
+| Memoria | Un proceso Python con `BAAI/bge-m3` cargado, codificando un lote de 120 fragmentos de hasta 1200 caracteres (el máximo documentado), midió un pico observado de **3,05 GiB** de RSS (`resource.getrusage`); `mem_limit` del `uploader` quedó en **4 GiB**, con margen de referencia; no es un mínimo verificado para otro hardware |
+| Primera indexación | Descarga `BAAI/bge-m3` (~4,3 GB medidos); el tiempo depende de la red y luego se reutiliza `embedding_model_cache` |
+| Acceso externo | El modelo local necesita Internet sólo para su primera descarga; OpenRouter se usa únicamente en consultas de IA en vivo |
 
 El loader y la API comparten la misma imagen CPU y la misma caché del modelo. Si Docker dispone de menos recursos, el arranque o la primera carga pueden tardar más; estas cifras orientan la preparación del laboratorio y no garantizan rendimiento.
 
@@ -135,7 +145,7 @@ El loader y la API comparten la misma imagen CPU y la misma caché del modelo. S
 | Redis | `127.0.0.1:6379` | Proyección temporal del último estado |
 | SeaweedFS S3 | `127.0.0.1:18333` | Manual inicial y originales cargados bajo `uploads/` |
 | Aplicación | `127.0.0.1:8006` | UI, catálogo, proxy de carga, `/health` y `/api/query` |
-| `uploader` | sin puerto publicado (`8007` interno) | Validación, E5, S3 e ingesta con `rag_ingest` |
+| `uploader` | sin puerto publicado (`8007` interno) | Validación, bge-m3, S3 e ingesta con `rag_ingest` |
 
 Los enlaces son locales. SeaweedFS usa un solo nodo sin TLS ni autenticación S3; los roles `ai_readonly`, `rag_readonly` y `rag_ingest` y sus credenciales fijas son **sólo para esta demo aislada**. `rag_ingest` puede modificar únicamente las tablas de documentos y chunks; no tiene acceso de propietario, a `lab_read` ni a la telemetría. No reutilices esta topología ni esas credenciales en producción.
 
@@ -290,7 +300,7 @@ Repetí sólo `HEAD` y `GET`; son lecturas. No edites el PDF generado ni ningún
 
 Si falta el objeto o no coincide su hash, repetí el loader para reconstruir **esta clave versionada** desde `data/manual-content.json`. No cambies otros objetos ni otros contenedores.
 
-## 5. E5 local — fragmentos y prefijos
+## 5. bge-m3 local — fragmentos sin prefijos
 
 ### Comando
 
@@ -309,11 +319,11 @@ Se indexan exactamente cuatro chunks:
 | 2 | Comprobación |
 | 2 | Recuperación segura |
 
-Cada fila conserva `document_id`, versión `1`, página, sección, `chunk_index`, `object_key`, hash del contenido, modelo y un vector de **384 dimensiones**.
+Cada fila conserva `document_id`, versión `1`, página, sección, `chunk_index`, `object_key`, hash del contenido, modelo y un vector de **1024 dimensiones**.
 
 ### Interpretación
 
-E5 no usa el mismo texto de entrada para ambos lados: cada fragmento se codifica como `passage: ...` y cada pregunta como `query: ...`. Mezclar u omitir esos prefijos degrada la comparación. El modelo corre en CPU y los embeddings son un índice derivado, no evidencia independiente.
+A diferencia de E5, `BAAI/bge-m3` no distingue pasaje de pregunta con prefijos (`query:`/`passage:`): cada fragmento y cada pregunta se codifican con su texto tal cual. Esa es justamente la migración de esta práctica: E5 mostró un sesgo de idioma (preferir chunks en español aunque la pregunta tuviera mejor respuesta en un chunk en inglés) mientras que bge-m3, multilingüe end-to-end, no lo mostró en las mediciones registradas en `odd/tasks/clase-06-bge-m3.md`. El modelo corre en CPU y los embeddings son un índice derivado, no evidencia independiente.
 
 ### Variación segura
 
@@ -345,7 +355,7 @@ Ese archivo ordena con `<=>` y muestra la proveniencia junto a cada vecino; desp
 
 ### Interpretación
 
-`embedding <=> query_embedding` calcula distancia coseno: menor significa más cercano. La API admite sólo vecinos con distancia `<= 0.20` **antes** de aplicar `top_k`. Ese corte es aproximado y fue calibrado para los cuatro fragmentos iniciales; puede aceptar falsos positivos, rechazar material útil y no promete pertinencia universal para PDF cargados.
+`embedding <=> query_embedding` calcula distancia coseno: menor significa más cercano. La API admite sólo vecinos con distancia `<= 0.55` **antes** de aplicar `top_k`. Ese corte es aproximado y fue recalibrado empíricamente para `BAAI/bge-m3` (las distancias de este modelo viven en otra escala que las de E5; ver la medición en `odd/tasks/clase-06-bge-m3.md`); puede aceptar falsos positivos, rechazar material útil y no promete pertinencia universal para PDF cargados.
 
 ### Variación segura
 
@@ -353,7 +363,7 @@ Probá otra pregunta manteniendo `--top-k` entre `1` y `4`. Compará siempre sec
 
 ### Recuperación
 
-Las consultas no escriben. Si no hay chunks, ejecutá primero el loader y luego la indexación E5, en ese orden.
+Las consultas no escriben. Si no hay chunks, ejecutá primero el loader y luego la indexación con `loader.ingest_vectors`, en ese orden.
 
 ## 7. RAG — responder desde el manual
 
@@ -378,7 +388,7 @@ El invariante verificado (por los tests automatizados con un cliente OpenRouter 
 
 ### Interpretación
 
-E5 y pgvector recuperan evidencia antes de llamar al proveedor. El modelo recibe contexto, pero puede interpretarlo mal; que un fragmento figure en `sources` no prueba que cada frase lo haya citado correctamente.
+bge-m3 y pgvector recuperan evidencia antes de llamar al proveedor. El modelo recibe contexto, pero puede interpretarlo mal; que un fragmento figure en `sources` no prueba que cada frase lo haya citado correctamente.
 
 ### Variación segura: evidencia ausente
 
@@ -395,7 +405,7 @@ curl --fail-with-body http://127.0.0.1:8006/api/query \
   }'
 ```
 
-El resultado determinista esperado es `No encontré evidencia suficiente en el manual para responder.`, con cero fuentes, traza `recuperación-pgvector-sin-resultados` y **sin llamada a OpenRouter**. El filtro explícito evita que un PDF cargado por vos cambie esta observación. Esto está probado para esa redacción exacta: como el corte `0.20` es aproximado y específico del corpus inicial, otras preguntas irrelevantes podrían atravesarlo como falsos positivos.
+El resultado determinista esperado es `No encontré evidencia suficiente en el manual para responder.`, con cero fuentes, traza `recuperación-pgvector-sin-resultados` y **sin llamada a OpenRouter**. El filtro explícito evita que un PDF cargado por vos cambie esta observación. Esto está probado para esa redacción exacta: como el corte `0.55` es aproximado y específico del corpus medido, otras preguntas irrelevantes podrían atravesarlo como falsos positivos.
 
 ### Recuperación
 
@@ -490,7 +500,7 @@ Antes de tocar telemetría o el manual, una primera llamada a OpenRouter analiza
 {"telemetry_question": "...", "manual_question": "..."}
 ```
 
-Cada clave puede ser `null` cuando esa parte no aplica, pero al menos una debe ser una pregunta concreta. El orquestador ejecuta **sólo** las ramas necesarias: la sub-pregunta de telemetría va por Text-to-SQL (generación, validación con `sqlglot` y ejecución como `ai_readonly`); la sub-pregunta del manual va por recuperación E5 + pgvector. La traza empieza con `orquestador` y, si el plan es JSON inválido, incompleto o con ambas claves en `null`, el flujo cae de forma segura a ejecutar **ambas** ramas con la pregunta original y agrega `orquestador-fallback` a la traza — nunca se pierde una pregunta por un plan malformado. La síntesis final reutiliza la misma evidencia (sólo la que efectivamente se recolectó) y las mismas reglas de seguridad de prompt que antes.
+Cada clave puede ser `null` cuando esa parte no aplica, pero al menos una debe ser una pregunta concreta. El orquestador ejecuta **sólo** las ramas necesarias: la sub-pregunta de telemetría va por Text-to-SQL (generación, validación con `sqlglot` y ejecución como `ai_readonly`); la sub-pregunta del manual va por recuperación bge-m3 + pgvector. La traza empieza con `orquestador` y, si el plan es JSON inválido, incompleto o con ambas claves en `null`, el flujo cae de forma segura a ejecutar **ambas** ramas con la pregunta original y agrega `orquestador-fallback` a la traza — nunca se pierde una pregunta por un plan malformado. La síntesis final reutiliza la misma evidencia (sólo la que efectivamente se recolectó) y las mismas reglas de seguridad de prompt que antes.
 
 ### Observable esperado
 
@@ -510,7 +520,7 @@ Si falta evidencia manual para una acción, no la infieras desde la telemetría.
 
 ## 10. Carga e inspección de un PDF propio
 
-La carga es local y no llama a OpenRouter. El original queda en S3; sus metadatos y chunks quedan en PostgreSQL/pgvector. Sólo cuando enviás después una pregunta en modo **RAG** o **Integrado** los extractos recuperados pueden salir hacia OpenRouter. Esa llamada puede tener costo y exponer datos personales, información sensible o instrucciones maliciosas incluidas dentro del PDF (*prompt injection*). Revisá siempre extractos y fuentes: el corte `0.20` no garantiza pertinencia para cualquier documento.
+La carga es local y no llama a OpenRouter. El original queda en S3; sus metadatos y chunks quedan en PostgreSQL/pgvector. Sólo cuando enviás después una pregunta en modo **RAG** o **Integrado** los extractos recuperados pueden salir hacia OpenRouter. Esa llamada puede tener costo y exponer datos personales, información sensible o instrucciones maliciosas incluidas dentro del PDF (*prompt injection*). Revisá siempre extractos y fuentes: el corte `0.55` no garantiza pertinencia para cualquier documento.
 
 ### Comando: recorrido en el navegador
 
@@ -525,7 +535,7 @@ printf 'PDF sintético creado en: %s\n' "$DEMO_PDF"
 1. Abrí [http://127.0.0.1:8006/](http://127.0.0.1:8006/) y, en **Cargar e inspeccionar un PDF**, seleccioná la ruta exacta impresa por el comando, o elegí otro PDF de texto autorizado.
 2. Presioná **Cargar PDF** y esperá el progreso `Cargando, fragmentando e indexando…`.
 3. Revisá el resumen: `document_id`, título, SHA-256, `object_key`, páginas, chunks, modelo, dimensión y preview de seis componentes.
-4. En **Documentos disponibles**, elegí **Inspeccionar**. Recorré metadatos, páginas, `chunk_index`, extractos, hashes, `vector_dims=384` y previews de seis valores.
+4. En **Documentos disponibles**, elegí **Inspeccionar**. Recorré metadatos, páginas, `chunk_index`, extractos, hashes, `vector_dims=1024` y previews de seis valores.
 5. En **Nueva consulta**, elegí **RAG**, seleccioná ese documento, escribí una pregunta libre y recién entonces decidí si querés realizar la llamada remota.
 
 Cuando termines, la limpieza opcional elimina únicamente la ruta temporal exacta que acabás de crear:
@@ -537,7 +547,7 @@ unset DEMO_PDF
 
 ### Observable esperado
 
-La traza de una carga exitosa avanza por `pdf_validated`, `chunks_embedded`, `s3_stored`, `s3_verified` y `postgres_indexed`. El identificador toma la forma `upload-<24 hex>` y la clave `uploads/<document_id>/v1/<sha256>.pdf`. El catálogo muestra entre 1 y 20 páginas, entre 1 y 120 chunks, E5 `intfloat/multilingual-e5-small`, dimensión `384` y sólo seis componentes de preview.
+La traza de una carga exitosa avanza por `pdf_validated`, `chunks_embedded`, `s3_stored`, `s3_verified` y `postgres_indexed`. El identificador toma la forma `upload-<24 hex>` y la clave `uploads/<document_id>/v1/<sha256>.pdf`. El catálogo muestra entre 1 y 20 páginas, entre 1 y 120 chunks, bge-m3 `BAAI/bge-m3`, dimensión `1024` y sólo seis componentes de preview.
 
 ### Interpretación
 
@@ -553,7 +563,7 @@ Copiá de la UI tu propio `document_id`; no uses un ID sintético. Esta consulta
 read -r -p 'DOC_ID mostrado por la UI: ' DOC_ID
 docker compose --env-file .env -f compose.yaml exec -T -e DOC_ID="$DOC_ID" app python - <<'PY'
 import os
-from shared.e5 import embedding_model, query_text, vector_literal
+from shared.embeddings import embedding_model, query_text, vector_literal
 from shared.rag_connection import rag_connection_settings
 from shared.retrieval import nearest_manual_chunks
 import psycopg
@@ -598,7 +608,7 @@ PY
 unset DOC_ID
 ```
 
-El observable es `role: rag_readonly`, el recuento del documento y `min_dims=max_dims=384`. Es un `SELECT` filtrado; no imprime embeddings ni contenido.
+El observable es `role: rag_readonly`, el recuento del documento y `min_dims=max_dims=1024`. Es un `SELECT` filtrado; no imprime embeddings ni contenido.
 
 Por último, verificá `HEAD` y el hash de `GET` desde `uploader`. El script consulta una única clave como `rag_ingest`, usa S3 local sin firma y nunca imprime bytes ni credenciales:
 
@@ -667,7 +677,60 @@ Anotá desde la UI `document_id`, SHA-256, `object_key` y cantidad de chunks. Re
 docker compose --env-file .env -f compose.yaml restart postgres seaweedfs uploader app
 ```
 
-Esperá servicios saludables, recargá la UI e inspeccioná el mismo documento. Los cuatro valores deben coincidir y la consulta acotada debe conservar `384` dimensiones. Eso prueba persistencia en este volumen; `restart` no prueba una inicialización desde volumen fresco. No ejecutes `down -v` para esta comprobación.
+Esperá servicios saludables, recargá la UI e inspeccioná el mismo documento. Los cuatro valores deben coincidir y la consulta acotada debe conservar `1024` dimensiones. Eso prueba persistencia en este volumen; `restart` no prueba una inicialización desde volumen fresco. No ejecutes `down -v` para esta comprobación.
+
+## 11. Caso cruzado de idioma — manual en inglés, pregunta en español
+
+Esta es la razón concreta de la migración de E5 a `BAAI/bge-m3`: E5 mostraba un sesgo de idioma (un chunk en español podía ganarle a un chunk en inglés más relevante frente a la misma pregunta en español); bge-m3 es multilingüe de punta a punta y no mostró ese sesgo en la comparación registrada en `odd/tasks/clase-06-bge-m3.md`. Esta sección lo demuestra con un documento real.
+
+### Comando
+
+Necesitás un PDF con texto en inglés (por ejemplo, la hoja de datos de un ESP32 u otra placa que ya tengas). Cargalo desde la UI como en la sección 10, o por API:
+
+```bash
+curl --fail-with-body http://127.0.0.1:8006/api/documents \
+  -H 'Content-Type: application/pdf' \
+  -H "X-Document-Title: $(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))" 'ESP32 datasheet (inglés)')" \
+  --data-binary @/ruta/a/tu/datasheet-en-ingles.pdf
+```
+
+Anotá el `document_id` devuelto y preguntá en español, filtrando por ese documento:
+
+```bash
+curl --fail-with-body http://127.0.0.1:8006/api/query \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "mode": "rag",
+    "question": "¿Qué corriente mínima debe entregar la fuente de alimentación?",
+    "top_k": 2,
+    "document_id": "upload-<tu-document-id>"
+  }'
+```
+
+### Observable esperado
+
+Esto no fue verificado contra el documento específico del estudiante ni contra OpenRouter en vivo (no se hacen llamadas pagas como parte de esta tarea). Lo que sí se midió, en un proyecto Docker Compose descartable y con un documento sintético en inglés (una hoja de datos ficticia de dos secciones, generada con ReportLab), es lo siguiente — una prueba chica de 8 preguntas, no un benchmark:
+
+| Pregunta (español) | Chunk correcto (inglés) | Distancia coseno del top-1 |
+| --- | --- | --- |
+| ¿Qué microcontrolador integra el módulo? | Board overview (ESP32-WROOM-32) | `0.375900` |
+| ¿Qué corriente mínima debe entregar la fuente de alimentación? | Power supply (3.3V, 500 mA) | `0.387848` |
+| ¿Cómo se reduce el consumo de corriente entre mediciones? | Deep sleep mode | `0.344507` |
+| ¿Cómo se actualiza el firmware de la placa? | Firmware update | `0.301732` |
+
+Las cuatro preguntas recuperaron el chunk correcto en primer lugar, con distancias muy por debajo del corte `0.55`. Para contraste, la misma pregunta irrelevante de la sección 7 (`¿Cuál es el precio de una bicicleta...?`) midió una distancia mínima de `0.685959` contra ese mismo documento en inglés: queda excluida con margen.
+
+### Interpretación
+
+El corte `0.55` no es una garantía universal: se calibró con esta mezcla (manual ENV-X en español + documento sintético en inglés + preguntas de prueba) y quedó con margen frente a la distancia irrelevante más cercana observada (`~0.615` contra el manual ENV-X, sección 7). Un documento real con vocabulario más ambiguo puede comportarse distinto; siempre revisá página, sección y distancia antes de confiar en una respuesta.
+
+### Variación segura
+
+Repetí la misma pregunta sin `document_id` para buscar en todos los documentos indexados, o probá una pregunta que sólo tenga respuesta en el manual español mientras el documento en inglés está seleccionado: debería devolver evidencia vacía en vez de forzar una coincidencia.
+
+### Recuperación
+
+Si la pregunta en español no recupera el chunk esperado, verificá primero que el documento haya quedado `indexed` (sección 10) y que estés filtrando por el `document_id` correcto; no reduzcas el corte para forzar una coincidencia.
 
 ## Verificación automatizada sin llamadas reales
 
@@ -677,14 +740,14 @@ Los tests inyectan respuestas simuladas de OpenRouter y prueban recuperación, S
 docker compose --env-file .env -f compose.yaml run --rm --entrypoint pytest loader -q
 ```
 
-La ejecución normal observada termina con **157 aprobados, 1 omitido opcional y 2 warnings de dependencias upstream**. El único test omitido consulta el catálogo del volumen actual en modo de sólo lectura. Para incluirlo explícitamente:
+La ejecución normal observada termina con **161 aprobados, 1 omitido opcional y 2 warnings de dependencias upstream**. El único test omitido consulta el catálogo del volumen actual en modo de sólo lectura. Para incluirlo explícitamente:
 
 ```bash
 docker compose --env-file .env -f compose.yaml run --rm \
   -e RUN_LIVE_SEED_CATALOG_CHECK=1 --entrypoint pytest loader -q
 ```
 
-La ejecución opt-in observada termina con **158 aprobados** y los mismos 2 warnings upstream. El éxito demuestra las fronteras programadas, no la calidad universal de un modelo remoto. No se verificó una inicialización desde volumen fresco y no se ejecutó `down -v`; el smoke real tuvo éxito únicamente para los prompts acotados de esta guía.
+La ejecución opt-in observada termina con **162 aprobados** y los mismos 2 warnings upstream. El éxito demuestra las fronteras programadas, no la calidad universal de un modelo remoto. Sí se verificó una inicialización desde volumen fresco (proyecto Docker Compose descartable, puertos distintos, nunca `down -v` sobre el volumen de este recorrido); ver la sección 11 y `odd/tasks/clase-06-bge-m3.md` para las mediciones.
 
 ## Solución de problemas
 
@@ -694,7 +757,7 @@ La ejecución opt-in observada termina con **158 aprobados** y los mismos 2 warn
 | PostgreSQL no queda saludable | Las tres extensiones deben existir juntas en la imagen fijada. | Revisá `docker compose --env-file .env -f compose.yaml ps` y los logs de `postgres`; no sustituyas silenciosamente una extensión. |
 | Redis devuelve `-2` para TTL | La clave canónica expiró o no fue cargada. | Repetí `run --rm loader`; reconstruye desde PostgreSQL y restaura TTL 3600. |
 | No hay chunks | Falta el PDF disponible o la indexación inicial. | Para el manual, ejecutá loader y luego `loader.ingest_vectors`; para una carga, revisá `uploader` y reintentá los mismos bytes. |
-| La primera indexación o carga tarda | E5 se está descargando o procesando en CPU dentro del límite del servicio. | Esperá y comprobá conectividad, espacio y salud; no cambies a una imagen GPU ni amplíes límites sin medir. |
+| La primera indexación o carga tarda | bge-m3 se está descargando o procesando en CPU dentro del límite del servicio. | Esperá y comprobá conectividad, espacio y salud; no cambies a una imagen GPU ni amplíes límites sin medir. |
 | La carga devuelve `422` | El archivo no es PDF válido, está cifrado, no tiene texto extraíble o supera páginas/caracteres/chunks. | Corregí una copia autorizada según el mensaje y reintentá; no fuerces la extensión ni los límites. |
 | La carga devuelve `413` | El cuerpo supera 10 MiB, incluso si faltaba `Content-Length`. | Generá una copia de hasta 10 MiB; no la comprimas o trunques de forma que pierda legibilidad. |
 | La carga devuelve `429` | Otra ingesta mantiene la compuerta interna. | Esperá a que termine y reintentá una vez; no paralelices cargas. |
@@ -703,7 +766,7 @@ La ejecución opt-in observada termina con **158 aprobados** y los mismos 2 warn
 | `/api/query` responde que falta la clave | La API arrancó correctamente, pero el modo IA está deshabilitado. | Colocá la clave sólo en `OPENROUTER_API_KEY` de tu `.env` local y recreá `app`; no la imprimas para diagnosticar. |
 | OpenRouter devuelve error | Puede faltar saldo, conectividad o disponibilidad del modelo. | Revisá esos tres factores en el proveedor sin mostrar la clave; no repitas en un bucle. |
 | SQL rechazado o promedio nulo | El modelo generó una forma no admitida, un literal con mayúsculas incorrectas o otro rango. | Inspeccioná SQL/filas y reformulá; no amplíes privilegios. |
-| RAG recupera algo irrelevante | El corte `0.20` es corpus-específico y admite falsos positivos. | Leé extractos y distancias; rechazá afirmaciones no respaldadas. |
+| RAG recupera algo irrelevante | El corte `0.55` es corpus-específico y admite falsos positivos. | Leé extractos y distancias; rechazá afirmaciones no respaldadas. |
 
 Para consultar estado sin expandir ni mostrar variables de entorno:
 
@@ -727,7 +790,7 @@ El reinicio posterior puede usar:
 docker compose --env-file .env -f compose.yaml up -d --build --wait
 ```
 
-> **Reinicio destructivo — documentado, no ejecutar durante el recorrido:** `docker compose --env-file .env -f compose.yaml down -v` elimina todos los volúmenes nombrados: historial, proyección Redis, objetos S3 y caché E5. Reservalo para una decisión explícita de borrar todo; no es un paso de recuperación normal.
+> **Reinicio destructivo — documentado, no ejecutar durante el recorrido:** `docker compose --env-file .env -f compose.yaml down -v` elimina todos los volúmenes nombrados: historial, proyección Redis, objetos S3 y caché de embeddings. Reservalo para una decisión explícita de borrar todo; no es un paso de recuperación normal.
 
 ## Lista de comprobación
 
@@ -737,17 +800,19 @@ docker compose --env-file .env -f compose.yaml up -d --build --wait
 - [ ] PostGIS devuelve `AIR-002` a 0 m y `AMB-001` a ~20 m con índice GiST; a 2 km del Aula 204 aparecen los tres dispositivos cercanos y `AMB-005` queda excluido.
 - [ ] Redis muestra la proyección con TTL de hasta 3600 s y elimina la clave descartable de 20 s.
 - [ ] SeaweedFS conserva el PDF inicial y cada original cargado con bucket, clave, metadatos y hash coincidentes.
-- [ ] La aplicación pública sigue limitada a `ai_readonly`/`rag_readonly`; el `uploader` interno usa sólo `rag_ingest`, sin OpenRouter ni rol propietario, con 2 GiB, 2 CPU y 256 procesos.
-- [ ] Un PDF de texto válido muestra progreso, identidad SHA inmutable, páginas, chunks, E5 de 384 dimensiones y preview de seis valores.
+- [ ] La aplicación pública sigue limitada a `ai_readonly`/`rag_readonly`; el `uploader` interno usa sólo `rag_ingest`, sin OpenRouter ni rol propietario, con 4 GiB, 2 CPU y 256 procesos.
+- [ ] Un PDF de texto válido muestra progreso, identidad SHA inmutable, páginas, chunks, bge-m3 de 1024 dimensiones y preview de seis valores.
 - [ ] Un PDF inválido, sobredimensionado o cifrado falla de forma explícita y permite un reintento seguro; no hay borrado ni reemplazo.
 - [ ] La misma carga conserva ID, objeto, chunks y título; el inventario permite inspeccionar y seleccionar el documento para RAG.
-- [ ] E5 usa `passage:` para chunks y `query:` para preguntas; pgvector devuelve tres vecinos sólo sobre el corpus original, donde la paráfrasis literal devuelve cero.
+- [ ] bge-m3 no usa prefijos para chunks ni preguntas; pgvector devuelve tres vecinos sólo sobre el corpus original, donde la paráfrasis literal devuelve cero.
 - [ ] La respuesta RAG se contrasta con página, sección y extracto; la ausencia de evidencia evita la llamada remota.
 - [ ] El SQL visible es un único `SELECT` admitido, ejecutado como `ai_readonly`, y el promedio es ~`805.6667`.
 - [ ] El modo integrado usa un orquestador que separa la pregunta, ejecuta sólo las ramas necesarias (telemetría, manual o ambas) y no sintetiza cuando falta el manual; un plan inválido cae a ejecutar ambas ramas con la pregunta original.
-- [ ] La inspección local muestra `rag_readonly`, proveniencia/distancia y `vector_dims=384` sin llamada paga ni contenido PDF crudo.
+- [ ] La inspección local muestra `rag_readonly`, proveniencia/distancia y `vector_dims=1024` sin llamada paga ni contenido PDF crudo.
 - [ ] `HEAD`/`GET` desde `uploader` confirma tipo, tamaño, metadatos y hash sin imprimir contenido ni credenciales.
-- [ ] Se comprendieron costo, privacidad, prompt injection, posibles errores del modelo y que el corte `0.20` no es universal.
+- [ ] Se comprendieron costo, privacidad, prompt injection, posibles errores del modelo y que el corte `0.55` no es universal.
 - [ ] Un reinicio conserva identidad y chunks; no se confunde esa prueba con una inicialización en volumen fresco.
-- [ ] La suite normal informa 157 aprobados/1 omitido opcional y la opt-in 158 aprobados; ambos casos conservan 2 warnings upstream.
+- [ ] Un documento en inglés consultado en español recupera el chunk correcto (sección 11); se entiende que el corte `0.55` fue calibrado con esa mezcla, no es garantía universal.
+- [ ] Sobre un volumen existente, la migración `08-bge-m3-migration.sql` es idempotente (aplicarla dos veces no cambia nada la segunda vez) y `loader.reindex_documents` deja indexados otra vez los documentos cargados por la UI.
+- [ ] La suite normal informa 161 aprobados/1 omitido opcional y la opt-in 162 aprobados; ambos casos conservan 2 warnings upstream.
 - [ ] El cierre usa `down` sin `-v`.

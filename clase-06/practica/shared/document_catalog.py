@@ -8,6 +8,7 @@ from typing import Any
 
 import psycopg  # type: ignore[import-not-found]
 
+from shared.embeddings import EXPECTED_DIMENSION  # type: ignore[import-not-found]
 from shared.rag_connection import (  # type: ignore[import-not-found]
     rag_connection_settings,
     validate_document_id,
@@ -15,6 +16,10 @@ from shared.rag_connection import (  # type: ignore[import-not-found]
 
 MAX_DOCUMENTS = 100
 MAX_DOCUMENT_CHUNKS = 120
+# vector(1024) rendered as text (8-decimal floats, comma separated, with
+# brackets) can reach roughly 1024 * 12 characters; bound generously above
+# that so a legitimate embedding is never rejected as oversized.
+MAX_EMBEDDING_TEXT_CHARS = 20_000
 
 
 class CatalogUnavailable(RuntimeError):
@@ -42,13 +47,17 @@ def _document_summary(row: dict[str, Any]) -> dict[str, Any]:
 def _embedding_preview(raw_vector: Any, vector_dims: Any) -> list[float]:
     """Parse pgvector text without evaluation and expose only six finite numbers."""
 
-    if vector_dims != 384 or not isinstance(raw_vector, str) or len(raw_vector) > 8192:
+    if (
+        vector_dims != EXPECTED_DIMENSION
+        or not isinstance(raw_vector, str)
+        or len(raw_vector) > MAX_EMBEDDING_TEXT_CHARS
+    ):
         return []
     try:
         parsed = json.loads(raw_vector)
     except (json.JSONDecodeError, TypeError):
         return []
-    if not isinstance(parsed, list) or len(parsed) != 384:
+    if not isinstance(parsed, list) or len(parsed) != EXPECTED_DIMENSION:
         return []
 
     preview: list[float] = []
@@ -147,7 +156,7 @@ def document_details(document_id: str) -> dict[str, Any] | None:
                   AND chunk.version = %s
                   AND document.storage_status = %s
                   AND document.index_status = %s
-                  AND vector_dims(chunk.embedding) = 384
+                  AND vector_dims(chunk.embedding) = 1024
                 ORDER BY chunk.chunk_index
                 LIMIT %s
                 """,

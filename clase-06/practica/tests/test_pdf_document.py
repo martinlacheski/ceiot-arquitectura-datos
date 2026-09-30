@@ -89,8 +89,9 @@ def test_parse_valid_document_preserves_page_provenance_overlap_and_identity() -
     assert 150 <= len(overlap_text) < 175
     assert not (set(page_one_chunks[-1].content.split()) & set(parsed.chunks[-1].content.split()))
     assert passage_text(parsed.chunks[0]).startswith(
-        f"passage: {parsed.chunks[0].section}. "
+        f"{parsed.chunks[0].section}. "
     )
+    assert not passage_text(parsed.chunks[0]).startswith("passage:")
 
     with pytest.raises(FrozenInstanceError):
         parsed.version = 2  # type: ignore[misc]

@@ -27,8 +27,8 @@ SUMMARY = {
     "page_count": 2,
     "extracted_char_count": 321,
     "chunk_count": 3,
-    "embedding_model": "intfloat/multilingual-e5-small",
-    "dimension": 384,
+    "embedding_model": "BAAI/bge-m3",
+    "dimension": 1024,
     "index_status": "indexed",
     "embedding_preview": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6],
     "trace": [
@@ -391,14 +391,14 @@ def test_uploader_compose_service_is_internal_bounded_and_least_privileged() -> 
     assert "POSTGRES_DB" in environment_keys
     assert "SEAWEEDFS_S3_ENDPOINT: http://seaweedfs:8333" in uploader
     assert "MANUAL_BUCKET: ceiot-manuales" in uploader
-    assert "MODELO_EMBEDDING: intfloat/multilingual-e5-small" in uploader
+    assert "MODELO_EMBEDDING: BAAI/bge-m3" in uploader
     assert "embedding_model_cache:/models/huggingface" in uploader
     assert {"POSTGRES_USER", "POSTGRES_PASSWORD", "OPENROUTER_API_KEY"}.isdisjoint(
         environment_keys
     )
     assert "postgres:\n        condition: service_healthy" in uploader
     assert "seaweedfs:\n        condition: service_healthy" in uploader
-    assert "mem_limit: 2g" in uploader
+    assert "mem_limit: 4g" in uploader
     assert 'cpus: "2.0"' in uploader
     assert "pids_limit: 256" in uploader
     assert "http://127.0.0.1:8007/health" in uploader

@@ -7,10 +7,12 @@ from typing import Any
 
 from shared.rag_connection import validate_document_id  # type: ignore[import-not-found]
 
-# Umbral didáctico calibrado exclusivamente contra los cuatro chunks del manual
-# de esta práctica. No es un clasificador semántico universal y no se amplía
-# para documentos heterogéneos: un resultado filtrado sigue sin probar relevancia.
-MAX_COSINE_DISTANCE = 0.20
+# Umbral didáctico recalibrado empíricamente para BAAI/bge-m3 (ver
+# odd/tasks/clase-06-bge-m3.md para las mediciones): las distancias de este
+# modelo viven en otra escala que las de E5. Sigue sin ser un clasificador
+# semántico universal ni una garantía de relevancia: un resultado filtrado
+# no prueba pertinencia y uno descartado no prueba irrelevancia.
+MAX_COSINE_DISTANCE = 0.55
 
 
 def nearest_manual_chunks(
@@ -31,7 +33,9 @@ def nearest_manual_chunks(
         or not math.isfinite(max_cosine_distance)
         or not 0 <= max_cosine_distance <= MAX_COSINE_DISTANCE
     ):
-        raise ValueError("El corte coseno debe estar entre 0 y 0.20")
+        raise ValueError(
+            f"El corte coseno debe estar entre 0 y {MAX_COSINE_DISTANCE}"
+        )
 
     if document_id is None:
         cursor.execute(

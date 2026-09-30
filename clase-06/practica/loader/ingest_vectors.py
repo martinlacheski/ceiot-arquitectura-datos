@@ -15,7 +15,7 @@ from botocore import UNSIGNED  # type: ignore[import-not-found]
 from botocore.config import Config  # type: ignore[import-not-found]
 from pypdf import PdfReader  # type: ignore[import-not-found]
 
-from shared.e5 import (  # type: ignore[import-not-found]
+from shared.embeddings import (  # type: ignore[import-not-found]
     MODEL_NAME,
     embedding_model,
     vector_literal,
@@ -183,9 +183,9 @@ def extract_chunks(pdf_bytes: bytes, document_id: str, version: int, object_key:
 
 
 def passage_text(chunk: Chunk) -> str:
-    """Agrega el prefijo E5 de pasaje al chunk específico del loader."""
+    """Texto de pasaje del chunk específico del loader; bge-m3 no usa prefijos."""
 
-    return f"passage: {chunk.section}. {chunk.content}"
+    return f"{chunk.section}. {chunk.content}"
 
 
 def store_chunks(

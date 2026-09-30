@@ -223,6 +223,9 @@ def parse_document(pdf_bytes: bytes, title: str, content_type: str) -> ParsedDoc
 
 
 def passage_text(chunk: PageChunk) -> str:
-    """Return the E5 passage input without loading the embedding model."""
+    """Return the passage input without loading the embedding model.
 
-    return f"passage: {chunk.section}. {chunk.content}"
+    bge-m3 does not use E5-style query/passage prefixes.
+    """
+
+    return f"{chunk.section}. {chunk.content}"
