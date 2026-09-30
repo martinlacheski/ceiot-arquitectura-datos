@@ -98,6 +98,33 @@ def test_catalog_and_inspection_discard_stale_async_responses() -> None:
     assert inspect_source.index("requestGeneration !== inspectRequestGeneration") < inspect_source.index("renderDocumentDetails(")
 
 
+def test_inspection_toggles_inline_below_its_document_in_a_scrollable_panel() -> None:
+    html = INDEX_HTML
+
+    assert "#document-details { max-height:" in html
+    assert "overflow-y: auto" in html
+    assert 'id="document-details-home"' in html
+    assert "article.dataset.documentId = documentItem.document_id" in html
+    assert "toggle.setAttribute('aria-controls', 'document-details')" in html
+    assert "toggle.setAttribute('aria-expanded'" in html
+    assert "'Ocultar'" in html and "'Inspeccionar'" in html
+    assert "inspectedDocumentId === documentItem.document_id" in html
+
+    list_start = html.index("function renderDocumentList")
+    list_source = html[list_start:html.index("async function loadDocuments", list_start)]
+    assert list_source.index("parkDocumentDetails()") < list_source.index("target.replaceChildren()")
+
+    hide_start = html.index("function hideDocumentDetails")
+    hide_source = html[hide_start:html.index("async function inspectDocument", hide_start)]
+    assert "++inspectRequestGeneration" in hide_source
+    assert "parkDocumentDetails()" in hide_source
+
+    inspect_start = html.index("async function inspectDocument")
+    inspect_source = html[inspect_start:html.index("uploadForm.addEventListener", inspect_start)]
+    assert "inspectedDocumentId = documentId" in inspect_source
+    assert "article.appendChild(documentDetails)" in inspect_source
+
+
 def test_catalog_and_inspection_failures_are_separate_and_report_partial_upload() -> None:
     html = INDEX_HTML
 

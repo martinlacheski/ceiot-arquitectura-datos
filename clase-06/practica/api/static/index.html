@@ -28,6 +28,10 @@
     dd { margin: 0; overflow-wrap: anywhere; }
     .source, .chunk, .document-item { border-left: .25rem solid #0e7490; padding-left: .8rem; margin-block: .8rem; }
     .excerpt { white-space: pre-wrap; }
+    .document-item > button { margin-top: .25rem; }
+    .document-item > button[aria-expanded="true"] { border-color: #075985; background: white; color: #075985; }
+    #document-details { max-height: 28rem; overflow-y: auto; margin-top: .6rem; padding: .75rem; border: 1px solid #ccd7df; border-radius: .35rem; background: #fafcfd; }
+    #document-details h3 { margin-top: 0; }
     [hidden] { display: none !important; }
   </style>
 </head>
@@ -66,12 +70,14 @@
       <p id="documents-error" class="error" role="alert" hidden></p>
       <div id="document-list" class="document-list"></div>
     </section>
-    <section id="document-details" aria-labelledby="document-details-title" hidden>
-      <h3 id="document-details-title">Inspección del documento</h3>
-      <p id="inspect-error" class="error" role="alert" hidden></p>
-      <div id="document-metadata"></div>
-      <div id="document-pages"></div>
-    </section>
+    <div id="document-details-home">
+      <section id="document-details" aria-labelledby="document-details-title" tabindex="0" hidden>
+        <h3 id="document-details-title">Inspección del documento</h3>
+        <p id="inspect-error" class="error" role="alert" hidden></p>
+        <div id="document-metadata"></div>
+        <div id="document-pages"></div>
+      </section>
+    </div>
   </section>
 
   <section class="panel" aria-labelledby="query-title">
@@ -163,6 +169,11 @@
   const uploadError = document.querySelector('#upload-error');
   let catalogRequestGeneration = 0;
   let inspectRequestGeneration = 0;
+  // A single inspection panel is reused: it moves below the inspected document and
+  // returns to its home container when hidden or before the catalog is re-rendered.
+  const documentDetails = document.querySelector('#document-details');
+  const documentDetailsHome = document.querySelector('#document-details-home');
+  let inspectedDocumentId = null;
 
   document.querySelectorAll('.example').forEach((example) => {
     example.addEventListener('click', () => {
@@ -234,6 +245,7 @@
 
   function renderDocumentList(documents) {
     const target = document.querySelector('#document-list');
+    parkDocumentDetails();
     target.replaceChildren();
     const currentSelection = documentSelect.value;
     documentSelect.replaceChildren();
@@ -249,12 +261,21 @@
       documentSelect.appendChild(option);
       const article = document.createElement('article');
       article.className = 'document-item';
+      article.dataset.documentId = documentItem.document_id;
       addTextElement(article, 'strong', documentItem.title);
       addTextElement(article, 'p', `${documentItem.document_id} · ${documentItem.pages} páginas · ${documentItem.chunk_count} fragmentos`);
       addTextElement(article, 'p', `Estado: ${documentItem.status} · modelo: ${documentItem.model}`);
-      const inspect = addTextElement(article, 'button', 'Inspeccionar');
-      inspect.type = 'button';
-      inspect.addEventListener('click', () => inspectDocument(documentItem.document_id));
+      const toggle = addTextElement(article, 'button', 'Inspeccionar');
+      toggle.type = 'button';
+      toggle.setAttribute('aria-controls', 'document-details');
+      toggle.setAttribute('aria-expanded', 'false');
+      toggle.addEventListener('click', () => {
+        if (inspectedDocumentId === documentItem.document_id) {
+          hideDocumentDetails();
+        } else {
+          inspectDocument(documentItem.document_id);
+        }
+      });
       target.appendChild(article);
     });
     if ([...documentSelect.options].some((option) => option.value === currentSelection)) {
@@ -315,11 +336,44 @@
     document.querySelector('#document-details').hidden = false;
   }
 
+  function findDocumentArticle(documentId) {
+    return [...document.querySelector('#document-list').children]
+      .find((element) => element.dataset.documentId === documentId) || null;
+  }
+
+  function updateInspectToggles() {
+    document.querySelectorAll('.document-item > button[aria-controls="document-details"]').forEach((toggle) => {
+      const expanded = toggle.parentElement.dataset.documentId === inspectedDocumentId;
+      toggle.textContent = expanded ? 'Ocultar' : 'Inspeccionar';
+      toggle.setAttribute('aria-expanded', String(expanded));
+    });
+  }
+
+  function parkDocumentDetails() {
+    documentDetails.hidden = true;
+    documentDetailsHome.appendChild(documentDetails);
+    inspectedDocumentId = null;
+  }
+
+  function hideDocumentDetails() {
+    ++inspectRequestGeneration;
+    parkDocumentDetails();
+    updateInspectToggles();
+  }
+
   async function inspectDocument(documentId) {
     const requestGeneration = ++inspectRequestGeneration;
     const inspectError = document.querySelector('#inspect-error');
     inspectError.hidden = true;
-    document.querySelector('#document-details').hidden = true;
+    documentDetails.hidden = true;
+    inspectedDocumentId = documentId;
+    const article = findDocumentArticle(documentId);
+    if (article) {
+      article.appendChild(documentDetails);
+    } else {
+      documentDetailsHome.appendChild(documentDetails);
+    }
+    updateInspectToggles();
     try {
       const response = await fetch(`/api/documents/${encodeURIComponent(documentId)}`);
       const payload = await readJson(response);
