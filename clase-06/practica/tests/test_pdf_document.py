@@ -134,7 +134,7 @@ def test_title_is_metadata_only_and_bounded() -> None:
     [
         (b"%PDF-1.4", "text/plain", "El tipo de archivo declarado debe ser application/pdf."),
         (b"no es un PDF", "application/pdf", "El archivo no tiene la firma de un PDF válido."),
-        (b"", "application/pdf", "El PDF debe contener entre 1 byte y 10 MiB."),
+        (b"", "application/pdf", "El PDF debe contener entre 1 byte y 50 MiB."),
     ],
 )
 def test_rejects_wrong_mime_magic_and_empty_payload(
@@ -143,7 +143,7 @@ def test_rejects_wrong_mime_magic_and_empty_payload(
     _assert_rejected(lambda: parse_document(payload, "Informe", content_type), reason)
 
 
-def test_rejects_more_than_10_mib_before_starting_parser(monkeypatch) -> None:
+def test_rejects_more_than_50_mib_before_starting_parser(monkeypatch) -> None:
     def parser_must_not_run(*args, **kwargs):
         raise AssertionError("PdfReader no debe ejecutarse")
 
@@ -152,7 +152,7 @@ def test_rejects_more_than_10_mib_before_starting_parser(monkeypatch) -> None:
 
     _assert_rejected(
         lambda: parse_document(oversized, "Informe", "application/pdf"),
-        "El PDF debe contener entre 1 byte y 10 MiB.",
+        "El PDF debe contener entre 1 byte y 50 MiB.",
     )
 
 
@@ -172,13 +172,13 @@ def test_rejects_encrypted_document() -> None:
     )
 
 
-def test_rejects_more_than_20_pages() -> None:
-    pdf_bytes = _pdf_bytes(*(f"Texto significativo de la página {page}." for page in range(21)))
+def test_accepts_more_than_20_pages_without_a_page_cap() -> None:
+    pdf_bytes = _pdf_bytes(*(f"Texto significativo de la página {page}." for page in range(25)))
 
-    _assert_rejected(
-        lambda: parse_document(pdf_bytes, "Extenso", "application/pdf"),
-        "El PDF debe tener entre 1 y 20 páginas.",
-    )
+    parsed = parse_document(pdf_bytes, "Extenso", "application/pdf")
+
+    assert parsed.page_count == 25
+    assert {chunk.page for chunk in parsed.chunks} == set(range(1, 26))
 
 
 class _FakePage:
@@ -244,34 +244,27 @@ def test_page_fragments_terminate_for_long_unbroken_token() -> None:
     assert all(overlap <= 120 for overlap in overlap_lengths)
 
 
-def test_rejects_page_and_total_text_limits(monkeypatch) -> None:
-    too_long_page = _FakeReader([_FakePage("a" * (pdf_document.MAX_PAGE_CHARS + 1))])
-    monkeypatch.setattr(pdf_document, "PdfReader", lambda *args, **kwargs: too_long_page)
-    _assert_rejected(
-        lambda: parse_document(b"%PDF mock", "Informe", "application/pdf"),
-        "Una página supera el límite de 20.000 caracteres extraídos.",
-    )
+def test_accepts_page_and_total_text_beyond_former_limits(monkeypatch) -> None:
+    long_page = _FakeReader([_FakePage("a" * 20_001)])
+    monkeypatch.setattr(pdf_document, "PdfReader", lambda *args, **kwargs: long_page)
+    parsed = parse_document(b"%PDF mock", "Informe", "application/pdf")
+    assert parsed.extracted_char_count == 20_001
 
-    total_too_long = _FakeReader(
-        [_FakePage("palabra " * 2500) for _ in range(11)]
-    )
-    monkeypatch.setattr(pdf_document, "PdfReader", lambda *args, **kwargs: total_too_long)
-    _assert_rejected(
-        lambda: parse_document(b"%PDF mock", "Informe", "application/pdf"),
-        "El PDF supera el límite de 200.000 caracteres extraídos.",
-    )
+    total_long = _FakeReader([_FakePage("palabra " * 2500) for _ in range(11)])
+    monkeypatch.setattr(pdf_document, "PdfReader", lambda *args, **kwargs: total_long)
+    parsed = parse_document(b"%PDF mock", "Informe", "application/pdf")
+    assert parsed.extracted_char_count > 200_000
 
 
-def test_rejects_more_than_120_chunks(monkeypatch) -> None:
+def test_accepts_more_than_120_chunks(monkeypatch) -> None:
     many_chunks = _FakeReader(
         [_FakePage(" ".join(f"palabra{i}" for i in range(1600))) for _ in range(10)]
     )
     monkeypatch.setattr(pdf_document, "PdfReader", lambda *args, **kwargs: many_chunks)
 
-    _assert_rejected(
-        lambda: parse_document(b"%PDF mock", "Informe", "application/pdf"),
-        "El PDF supera el límite de 120 fragmentos.",
-    )
+    parsed = parse_document(b"%PDF mock", "Informe", "application/pdf")
+
+    assert len(parsed.chunks) > 120
 
 
 def test_wraps_parser_and_extraction_errors_with_safe_reasons(monkeypatch) -> None:

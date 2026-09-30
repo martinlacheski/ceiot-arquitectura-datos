@@ -117,7 +117,7 @@ loader/
 | Herramientas | Docker con Docker Compose v2 (`docker compose`) y `curl` |
 | Imagen compartida | CPU-only, con `torch==2.6.0+cpu`; tamaño observado aproximado de **1,99 GB** |
 | Disco para Docker | `BAAI/bge-m3` midió **4,3 GB** reales en `embedding_model_cache` en esta corrida: sentence-transformers 3.3.1 descarga los pesos en dos formatos (`pytorch_model.bin` y `model.safetensors`, ~2,1 GB cada uno) porque el repo publica ambos y no encontramos una forma simple y robusta de restringir la descarga a uno solo sin tocar el código vendorizado; sumado a imágenes y volúmenes, recomendación estimada de **10 GB libres**; no es un mínimo verificado |
-| Memoria | Un proceso Python con `BAAI/bge-m3` cargado, codificando un lote de 120 fragmentos de hasta 1200 caracteres (el máximo documentado), midió un pico observado de **3,05 GiB** de RSS (`resource.getrusage`); `mem_limit` del `uploader` quedó en **4 GiB**, con margen de referencia; no es un mínimo verificado para otro hardware |
+| Memoria | La carga codifica en lotes fijos de **4 fragmentos** (no todo el documento junto) y con 2 hilos (`OMP_NUM_THREADS=2`), para que la memoria no dependa del tamaño del PDF. Medido 2026-09-30 en un contenedor con los límites del `uploader` (2 CPU, 4 GiB): tres datasheets ESP32 seguidos (78 a 93 fragmentos) mantuvieron el uso del contenedor en ~**1,2 GiB**, con pico de **1,4 GiB** al cargar el modelo; no es un mínimo verificado para otro hardware |
 | Primera indexación | Descarga `BAAI/bge-m3` (~4,3 GB medidos); el tiempo depende de la red y luego se reutiliza `embedding_model_cache` |
 | Acceso externo | El modelo local necesita Internet sólo para su primera descarga; OpenRouter se usa únicamente en consultas de IA en vivo |
 
@@ -519,7 +519,7 @@ printf 'PDF sintético creado en: %s\n' "$DEMO_PDF"
 ```
 
 1. Abrí [http://127.0.0.1:8006/](http://127.0.0.1:8006/) y, en **Cargar e inspeccionar un PDF**, seleccioná la ruta exacta impresa por el comando, o elegí otro PDF de texto autorizado.
-2. Presioná **Cargar PDF** y esperá el progreso `Cargando, fragmentando e indexando…`.
+2. Presioná **Cargar PDF**. Debajo del botón vas a ver `Cargando, fragmentando e indexando…` y, mientras se generan los embeddings, un segundo texto que avanza en vivo, por ejemplo `Indexando fragmento 12 de 93 · Generando embeddings…`. Ese texto se actualiza por cada lote de 4 fragmentos indexado, no recién al final.
 3. Revisá el resumen: `document_id`, título, SHA-256, `object_key`, páginas, chunks, modelo, dimensión y preview de seis componentes.
 4. En **Documentos disponibles**, elegí **Inspeccionar**. Recorré metadatos, páginas, `chunk_index`, extractos, hashes, `vector_dims=1024` y previews de seis valores.
 5. En **Nueva consulta**, elegí **RAG**, seleccioná ese documento, escribí una pregunta libre y recién entonces decidí si querés realizar la llamada remota.
@@ -533,13 +533,22 @@ unset DEMO_PDF
 
 ### Observable esperado
 
-La traza de una carga exitosa avanza por `pdf_validated`, `chunks_embedded`, `s3_stored`, `s3_verified` y `postgres_indexed`. El identificador toma la forma `upload-<24 hex>` y la clave `uploads/<document_id>/v1/<sha256>.pdf`. El catálogo muestra entre 1 y 20 páginas, entre 1 y 120 chunks, bge-m3 `BAAI/bge-m3`, dimensión `1024` y sólo seis componentes de preview.
+La traza de una carga exitosa avanza por `pdf_validated`, `chunks_embedded`, `s3_stored`, `s3_verified` y `postgres_indexed`. El identificador toma la forma `upload-<24 hex>` y la clave `uploads/<document_id>/v1/<sha256>.pdf`. El catálogo muestra 1 o más páginas, 1 o más chunks (sin techo), bge-m3 `BAAI/bge-m3`, dimensión `1024` y sólo seis componentes de preview.
+
+Por debajo, la carga sigue siendo una única petición HTTP síncrona (el navegador espera), pero la respuesta es un flujo `application/x-ndjson`: una línea JSON por evento. Mientras se generan embeddings vas a ver una línea de progreso por cada lote de 4 fragmentos (`{"event":"progress","stage":"chunks_embedded","done":12,"total":93}`), una línea más por cada etapa siguiente de la traza, y una línea final `{"event":"result", ...}` con el mismo resumen que mostraba la versión anterior de esta práctica. Podés verlo con `curl -N` (la opción `-N` desactiva el buffer de `curl` para que las líneas aparezcan a medida que llegan, no todas juntas al final):
+
+```bash
+curl -N -sS -X POST http://127.0.0.1:8006/api/documents \
+  -H 'Content-Type: application/pdf' \
+  -H "X-Document-Title: $(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))" 'Demo PDF')" \
+  --data-binary @"$DEMO_PDF"
+```
 
 ### Interpretación
 
-El SHA-256 de los bytes define una identidad inmutable. Cargar otra vez exactamente los mismos bytes produce el mismo ID, objeto, chunks y título persistido: no duplica ni reemplaza el documento. Esta práctica no ofrece borrado ni reemplazo. Admite hasta **10 MiB**, **20 páginas**, **20.000 caracteres extraídos por página** (`MAX_PAGE_CHARS=20000` en el parser), **200.000 caracteres extraídos en total** y **120 chunks**; ambos límites de caracteres se aplican, sólo procesa texto extraíble, no hace OCR y rechaza PDF cifrados.
+El SHA-256 de los bytes define una identidad inmutable. Cargar otra vez exactamente los mismos bytes produce el mismo ID, objeto, chunks y título persistido: no duplica ni reemplaza el documento. Esta práctica no ofrece borrado ni reemplazo. Admite hasta **50 MiB** (único límite que queda: el PDF se lee completo en memoria); no hay límite de páginas, de caracteres extraídos ni de cantidad de chunks, sólo procesa texto extraíble, no hace OCR y rechaza PDF cifrados. El tiempo de indexación crece con el documento. El servicio `uploader` tiene 2 CPU asignadas y fija `OMP_NUM_THREADS=2` para que PyTorch use esa misma cantidad de hilos. Medido en un contenedor con esos mismos límites (2 CPU, 4 GiB), indexando seguidos y en el mismo proceso los tres datasheets ESP32 de la sección 11: 78, 93 y 89 fragmentos en 93 s, 114 s y 108 s, es decir, unos **1,2 segundos por fragmento**. Un datasheet de 50 páginas con unos 90 fragmentos tarda alrededor de 2 minutos; en un equipo más lento o con otra carga puede tardar más, no es un tiempo garantizado. La memoria del contenedor se mantuvo cerca de **1,2 GiB** durante las tres cargas (pico de 1,4 GiB al cargar el modelo): no crece con el tamaño del documento porque los embeddings se calculan en lotes fijos de 4 fragmentos, y no se acumuló entre cargas. El tope de hilos importa: sin él, PyTorch lanzó 10 hilos sobre las 2 CPU, la indexación tardó unos 3 segundos por fragmento y dos cargas seguidas llevaron el uso a ~3,9 GiB sobre el `mem_limit` de 4 GiB.
 
-La aplicación es un proxy: valida el límite y reenvía bytes al `uploader` interno. `app` conserva sólo `ai_readonly`, `rag_readonly` y la clave para consultas posteriores; `uploader` no está publicado, usa `rag_ingest` limitado a las tablas documentales y no recibe OpenRouter ni credenciales de propietario.
+La aplicación es un proxy: valida el límite de tamaño y reenvía bytes y el flujo de progreso, línea por línea, entre el `uploader` interno y el navegador, sin acumular la respuesta completa en memoria. `app` conserva sólo `ai_readonly`, `rag_readonly` y la clave para consultas posteriores; `uploader` no está publicado, usa `rag_ingest` limitado a las tablas documentales y no recibe OpenRouter ni credenciales de propietario. Si algo falla después de que el flujo ya empezó a responder (código `200`), el error llega como una línea `{"event":"error", "detail": "..."}` en vez de un código de error HTTP, porque la cabecera de estado ya se envió.
 
 ### Variación segura: inspección local sin llamada paga
 
@@ -650,7 +659,8 @@ El resultado esperado informa `role: rag_ingest`, la clave seleccionada y los cu
 ### Recuperación
 
 - **Archivo inválido o sin texto:** elegí un PDF real con texto extraíble. No renombres una imagen a `.pdf`; exportala con texto o aplicá OCR fuera de este laboratorio y revisá el resultado antes de reintentar.
-- **Más de 10 MiB, 20 páginas, 20.000 caracteres extraídos en una página (`MAX_PAGE_CHARS=20000`), 200.000 caracteres extraídos en total o 120 chunks:** generá una copia acotada que conserve sólo las páginas y el texto necesarios y volvé a cargarla. El límite del parser por página es independiente del total: repartí contenido demasiado denso entre páginas cuando corresponda. No reduzcas límites ni reemplaces objetos manualmente.
+- **Más de 50 MiB:** es el único límite de tamaño que queda (el PDF se lee completo en memoria). Generá una copia más liviana o dividila y volvé a cargarla; no reemplaces objetos manualmente.
+- **La carga tarda varios minutos:** es esperable para documentos largos (alrededor de 1,2 s por fragmento con las 2 CPU del `uploader`). Mirá el texto de progreso debajo del botón **Cargar PDF**: mientras avance (`Indexando fragmento N de total…`), la carga sigue en curso, no está colgada.
 - **PDF cifrado:** trabajá sobre una copia descifrada autorizada y sin información sensible; el original se rechaza antes de almacenar o indexar.
 - **`429` o `503`:** esperá a que termine la única ingesta activa; verificá `docker compose --env-file .env -f compose.yaml ps` y reintentá una vez. No envíes cargas en bucle.
 - **Falla después de almacenar:** repetí los mismos bytes cuando PostgreSQL, S3 y `uploader` estén saludables. La identidad por hash converge al mismo documento y no crea otra versión.
@@ -683,16 +693,22 @@ Agrandar E5 no corrigió el sesgo: el problema era de la familia de modelos, no 
 
 ### Comando
 
-Necesitás un PDF con texto en inglés (por ejemplo, la hoja de datos de un ESP32 u otra placa que ya tengas). Cargalo desde la UI como en la sección 10, o por API:
+Necesitás un PDF con texto en inglés. Si no tenés uno a mano, descargá vos mismo (fuera de este repo; no lo subas al repositorio) alguna hoja de datos oficial de ESP32, por ejemplo:
+
+- <https://documentation.espressif.com/esp32-wroom-32e_esp32-wroom-32ue_datasheet_en.pdf>
+- <https://documentation.espressif.com/esp32-c3-mini-1_datasheet_en.pdf>
+- <https://documentation.espressif.com/esp32-s3-wroom-1_wroom-1u_datasheet_en.pdf>
+
+Cargalo desde la UI como en la sección 10 (ahí vas a ver el progreso en vivo), o por API. Como la carga ahora responde `application/x-ndjson`, la respuesta trae una línea de progreso por lote y una línea final `{"event":"result", ...}` con `document_id`; `-N` evita que `curl` junte todo el flujo hasta el final:
 
 ```bash
-curl --fail-with-body http://127.0.0.1:8006/api/documents \
+curl -N --fail-with-body http://127.0.0.1:8006/api/documents \
   -H 'Content-Type: application/pdf' \
   -H "X-Document-Title: $(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))" 'ESP32 datasheet (inglés)')" \
   --data-binary @/ruta/a/tu/datasheet-en-ingles.pdf
 ```
 
-Anotá el `document_id` devuelto y preguntá en español, filtrando por ese documento:
+Anotá el `document_id` de la última línea (`{"event":"result", ...}`) y preguntá en español, filtrando por ese documento:
 
 ```bash
 curl --fail-with-body http://127.0.0.1:8006/api/query \
@@ -718,6 +734,16 @@ Esto no fue verificado contra el documento específico del estudiante ni contra 
 
 Las cuatro preguntas recuperaron el chunk correcto en primer lugar, con distancias muy por debajo del corte `0.55`. Para contraste, la misma pregunta irrelevante de la sección 7 (`¿Cuál es el precio de una bicicleta...?`) midió una distancia mínima de `0.685959` contra ese mismo documento en inglés: queda excluida con margen.
 
+Esto sí se verificó, además, contra datasheets ESP32 reales (recuperación pgvector sola, sin llamar a OpenRouter): tras cargar los tres PDF oficiales linkeados más arriba a través del endpoint público, estas preguntas en español recuperaron el chunk correcto en primer lugar:
+
+| Documento | Pregunta (español) | Página | Distancia coseno del top-1 |
+| --- | --- | --- | --- |
+| esp32-c3-mini-1 (78 fragmentos) | ¿Qué corriente mínima debe entregar la fuente de alimentación? | 21 | `0.368904` |
+| esp32-wroom-32e (89 fragmentos) | ¿Qué microcontrolador integra el módulo? | 2 | `0.389828` |
+| esp32-s3-wroom-1 (93 fragmentos) | ¿Cómo se reduce el consumo de corriente entre mediciones? | 30 | `0.447644` |
+
+Las tres distancias quedan por debajo de `0.55`, pero la del datasheet S3 (`0.447644`) está notablemente más cerca del corte que las del corpus chico de más arriba: son documentos técnicos reales con vocabulario más denso, tal como advierte la interpretación siguiente.
+
 ### Interpretación
 
 El corte `0.55` no es una garantía universal: se calibró con esta mezcla (manual ENV-X en español + documento sintético en inglés + preguntas de prueba) y quedó con margen frente a la distancia irrelevante más cercana observada (`~0.615` contra el manual ENV-X, sección 7). Un documento real con vocabulario más ambiguo puede comportarse distinto; siempre revisá página, sección y distancia antes de confiar en una respuesta.
@@ -738,14 +764,14 @@ Los tests inyectan respuestas simuladas de OpenRouter y prueban recuperación, S
 docker compose --env-file .env -f compose.yaml run --rm --entrypoint pytest loader -q
 ```
 
-La ejecución normal observada termina con **157 aprobados, 1 omitido opcional y 2 warnings de dependencias upstream**. El único test omitido consulta el catálogo del volumen actual en modo de sólo lectura. Para incluirlo explícitamente:
+La ejecución normal observada termina con **155 aprobados, 1 omitido opcional y 2 warnings de dependencias upstream**. El único test omitido consulta el catálogo del volumen actual en modo de sólo lectura. Para incluirlo explícitamente:
 
 ```bash
 docker compose --env-file .env -f compose.yaml run --rm \
   -e RUN_LIVE_SEED_CATALOG_CHECK=1 --entrypoint pytest loader -q
 ```
 
-La ejecución opt-in observada termina con **158 aprobados** y los mismos 2 warnings upstream. El éxito demuestra las fronteras programadas, no la calidad universal de un modelo remoto. Sí se verificó una inicialización desde volumen fresco (proyecto Docker Compose descartable, puertos distintos, nunca `down -v` sobre el volumen de este recorrido); la sección 11 resume las mediciones.
+La ejecución opt-in observada termina con **156 aprobados** y los mismos 2 warnings upstream. El éxito demuestra las fronteras programadas, no la calidad universal de un modelo remoto. Sí se verificó una inicialización desde volumen fresco (proyecto Docker Compose descartable, puertos distintos, nunca `down -v` sobre el volumen de este recorrido); la sección 11 resume las mediciones.
 
 ## Solución de problemas
 
@@ -757,7 +783,7 @@ La ejecución opt-in observada termina con **158 aprobados** y los mismos 2 warn
 | No hay chunks | Falta el PDF disponible o la indexación inicial. | Para el manual, ejecutá loader y luego `loader.ingest_vectors`; para una carga, revisá `uploader` y reintentá los mismos bytes. |
 | La primera indexación o carga tarda | bge-m3 se está descargando o procesando en CPU dentro del límite del servicio. | Esperá y comprobá conectividad, espacio y salud; no cambies a una imagen GPU ni amplíes límites sin medir. |
 | La carga devuelve `422` | El archivo no es PDF válido, está cifrado, no tiene texto extraíble o supera páginas/caracteres/chunks. | Corregí una copia autorizada según el mensaje y reintentá; no fuerces la extensión ni los límites. |
-| La carga devuelve `413` | El cuerpo supera 10 MiB, incluso si faltaba `Content-Length`. | Generá una copia de hasta 10 MiB; no la comprimas o trunques de forma que pierda legibilidad. |
+| La carga devuelve `413` | El cuerpo supera 50 MiB, incluso si faltaba `Content-Length`. | Generá una copia de hasta 50 MiB; no la comprimas o trunques de forma que pierda legibilidad. |
 | La carga devuelve `429` | Otra ingesta mantiene la compuerta interna. | Esperá a que termine y reintentá una vez; no paralelices cargas. |
 | Catálogo o carga devuelve `503` | PostgreSQL, S3 o `uploader` no está disponible; el detalle interno fue sanitizado. | Consultá `compose ps` y logs del servicio afectado sin imprimir variables ni configuración expandida. |
 | El mismo PDF conserva el título anterior | La identidad depende de los bytes y la carga duplicada es idempotente. | Es el comportamiento esperado; no hay reemplazo. Cambiá el contenido sólo si realmente es otro documento. |
@@ -811,5 +837,5 @@ docker compose --env-file .env -f compose.yaml up -d --build --wait
 - [ ] Se comprendieron costo, privacidad, prompt injection, posibles errores del modelo y que el corte `0.55` no es universal.
 - [ ] Un reinicio conserva identidad y chunks; no se confunde esa prueba con una inicialización en volumen fresco.
 - [ ] Un documento en inglés consultado en español recupera el chunk correcto (sección 11); se entiende que el corte `0.55` fue calibrado con esa mezcla, no es garantía universal.
-- [ ] La suite normal informa 157 aprobados/1 omitido opcional y la opt-in 158 aprobados; ambos casos conservan 2 warnings upstream.
+- [ ] La suite normal informa 155 aprobados/1 omitido opcional y la opt-in 156 aprobados; ambos casos conservan 2 warnings upstream.
 - [ ] El cierre usa `down` sin `-v`.

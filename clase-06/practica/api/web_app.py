@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import math
 import re
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import quote, unquote
@@ -15,7 +17,7 @@ from fastapi import (  # type: ignore[import-not-found]
     HTTPException,
     Request,
 )
-from fastapi.responses import FileResponse  # type: ignore[import-not-found]
+from fastapi.responses import FileResponse, StreamingResponse  # type: ignore[import-not-found]
 from pydantic import (  # type: ignore[import-not-found]
     BaseModel,
     ConfigDict,
@@ -41,10 +43,20 @@ from shared.sql_guard import SQLRejected  # type: ignore[import-not-found]
 app = FastAPI(title="Laboratorio IoT Clase 06", version="1.0.0")
 INDEX_HTML = Path(__file__).with_name("static") / "index.html"
 PDF_CONTENT_TYPE = "application/pdf"
+NDJSON_CONTENT_TYPE = "application/x-ndjson"
 UPLOADER_URL = "http://uploader:8007/internal/documents"
-UPLOADER_TIMEOUT_SECONDS = 240.0
+# No total cap: uploads scale with document size. A generous per-read timeout covers
+# one embedding batch on a slow CPU (measured ~4.4 s for a batch of 4 at 1.1 s/chunk;
+# this leaves wide margin), while connect/write stay short since the body is already
+# read into memory before this request starts.
+UPLOADER_TIMEOUT = httpx.Timeout(connect=10.0, write=30.0, read=120.0, pool=10.0)
 MAX_ENCODED_TITLE_CHARS = 1200
 _BAD_PERCENT_ESCAPE = re.compile(r"%(?![0-9A-Fa-f]{2})")
+_UPLOAD_PROGRESS_STAGES = frozenset(
+    {"pdf_validated", "chunks_embedded", "s3_stored", "s3_verified", "postgres_indexed"}
+)
+_GENERIC_STREAM_ERROR = "La carga no está disponible temporalmente."
+_INVALID_UPSTREAM_ERROR = "El servicio de carga devolvió una respuesta inválida."
 
 
 class QueryRequest(BaseModel):
@@ -86,9 +98,9 @@ class UploadSummary(BaseModel):
     object_key: str
     sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     byte_count: int = Field(ge=1, le=MAX_PDF_BYTES)
-    page_count: int = Field(ge=1, le=20)
-    extracted_char_count: int = Field(ge=1, le=200_000)
-    chunk_count: int = Field(ge=1, le=120)
+    page_count: int = Field(ge=1)
+    extracted_char_count: int = Field(ge=1)
+    chunk_count: int = Field(ge=1)
     embedding_model: Literal["BAAI/bge-m3"]
     dimension: Literal[1024]
     index_status: Literal["indexed"]
@@ -148,7 +160,7 @@ def _reject_known_oversize(request: Request) -> None:
     except ValueError:
         return
     if content_length > MAX_PDF_BYTES:
-        raise HTTPException(status_code=413, detail="El PDF supera el límite de 10 MiB.")
+        raise HTTPException(status_code=413, detail="El PDF supera el límite de 50 MiB.")
 
 
 async def _bounded_body(request: Request) -> bytes:
@@ -157,7 +169,7 @@ async def _bounded_body(request: Request) -> bytes:
         if len(body) + len(chunk) > MAX_PDF_BYTES:
             raise HTTPException(
                 status_code=413,
-                detail="El PDF supera el límite de 10 MiB.",
+                detail="El PDF supera el límite de 50 MiB.",
             )
         body.extend(chunk)
     return bytes(body)
@@ -183,21 +195,102 @@ def _encoded_title(raw_title: str | None) -> str | None:
     return quote(decoded, safe="", encoding="utf-8", errors="strict")
 
 
-def _upstream_detail(response: httpx.Response, status_code: int) -> str:
+def _upstream_detail(payload: Any, status_code: int) -> str:
     defaults = {
         422: "El PDF no pudo ser procesado.",
         429: "Ya hay una carga en proceso; intentá nuevamente más tarde.",
         503: "La carga no está disponible temporalmente.",
     }
-    try:
-        payload = response.json()
-    except ValueError:
-        return defaults[status_code]
     detail = payload.get("detail") if isinstance(payload, dict) else None
     if not isinstance(detail, str):
         return defaults[status_code]
     bounded = " ".join(detail.split())[:300]
     return bounded or defaults[status_code]
+
+
+def _sanitized_detail(detail: Any) -> str:
+    if not isinstance(detail, str):
+        return _GENERIC_STREAM_ERROR
+    bounded = " ".join(detail.split())[:300]
+    return bounded or _GENERIC_STREAM_ERROR
+
+
+def _encode_event(event: dict[str, Any]) -> bytes:
+    return (json.dumps(event) + "\n").encode("utf-8")
+
+
+def _validated_progress_event(payload: dict[str, Any]) -> dict[str, Any] | None:
+    stage = payload.get("stage")
+    done = payload.get("done")
+    total = payload.get("total")
+    if (
+        stage not in _UPLOAD_PROGRESS_STAGES
+        or not isinstance(done, int)
+        or isinstance(done, bool)
+        or not isinstance(total, int)
+        or isinstance(total, bool)
+        or done < 0
+        or total < 0
+        or done > total
+    ):
+        return None
+    return {"event": "progress", "stage": stage, "done": done, "total": total}
+
+
+async def _relay_upload_events(
+    response: httpx.Response, pdf_bytes: bytes
+) -> AsyncIterator[bytes]:
+    """Re-validate and re-encode each upstream ndjson line before relaying it.
+
+    Progress and error lines are passed through after a shape check; the final
+    ``result`` line is re-validated with the same ``UploadSummary`` contract the
+    previous buffered proxy enforced, so a compromised or buggy uploader still
+    cannot smuggle unexpected fields or an inconsistent byte count to the browser.
+    """
+
+    async for raw_line in response.aiter_lines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            payload = json.loads(line)
+        except ValueError:
+            yield _encode_event({"event": "error", "detail": _INVALID_UPSTREAM_ERROR})
+            return
+        event = payload.get("event") if isinstance(payload, dict) else None
+
+        if event == "progress":
+            progress = _validated_progress_event(payload)
+            if progress is None:
+                yield _encode_event(
+                    {"event": "error", "detail": _INVALID_UPSTREAM_ERROR}
+                )
+                return
+            yield _encode_event(progress)
+            continue
+
+        if event == "error":
+            yield _encode_event(
+                {"event": "error", "detail": _sanitized_detail(payload.get("detail"))}
+            )
+            return
+
+        if event == "result":
+            try:
+                fields = {key: value for key, value in payload.items() if key != "event"}
+                summary = UploadSummary.model_validate(fields)
+                if summary.byte_count != len(pdf_bytes):
+                    raise ValueError("upstream byte count does not match request body")
+            except (ValueError, ValidationError, TypeError):
+                yield _encode_event(
+                    {"event": "error", "detail": _INVALID_UPSTREAM_ERROR}
+                )
+                return
+            yield _encode_event({"event": "result", **summary.model_dump()})
+            return
+
+        yield _encode_event({"event": "error", "detail": _INVALID_UPSTREAM_ERROR})
+        return
 
 
 @app.get("/api/documents")
@@ -230,7 +323,16 @@ async def upload_document(
         alias="X-Document-Title",
         max_length=MAX_ENCODED_TITLE_CHARS,
     ),
-) -> dict[str, Any]:
+) -> StreamingResponse:
+    """Proxy one PDF to the internal uploader and relay its ndjson progress stream.
+
+    Content type, declared size and title are still rejected here with their normal
+    status codes before any request reaches the uploader. Once the uploader accepts
+    the document (its own validation happens before it starts streaming), this relays
+    its ``application/x-ndjson`` response line by line, without buffering the whole
+    stream, so the browser sees progress as it happens.
+    """
+
     if _declared_mime(request) != PDF_CONTENT_TYPE:
         raise HTTPException(
             status_code=415,
@@ -243,44 +345,53 @@ async def upload_document(
     if encoded_title is not None:
         headers["X-Document-Title"] = encoded_title
 
+    client = httpx.AsyncClient(timeout=UPLOADER_TIMEOUT)
+    stream_ctx = client.stream("POST", UPLOADER_URL, content=pdf_bytes, headers=headers)
     try:
-        async with httpx.AsyncClient(timeout=UPLOADER_TIMEOUT_SECONDS) as client:
-            response = await client.post(
-                UPLOADER_URL,
-                content=pdf_bytes,
-                headers=headers,
-            )
+        response = await stream_ctx.__aenter__()
     except httpx.RequestError as error:
+        await client.aclose()
         raise HTTPException(
             status_code=503,
             detail="La carga no está disponible temporalmente.",
         ) from error
     except Exception as error:
+        await client.aclose()
         raise HTTPException(
             status_code=502,
             detail="El servicio de carga devolvió una respuesta inválida.",
         ) from error
 
     if response.status_code in {422, 429, 503}:
+        try:
+            body = await response.aread()
+            payload = json.loads(body)
+        except ValueError:
+            payload = None
+        finally:
+            await stream_ctx.__aexit__(None, None, None)
+            await client.aclose()
         raise HTTPException(
             status_code=response.status_code,
-            detail=_upstream_detail(response, response.status_code),
+            detail=_upstream_detail(payload, response.status_code),
         )
     if response.status_code != 200:
+        await stream_ctx.__aexit__(None, None, None)
+        await client.aclose()
         raise HTTPException(
             status_code=502,
             detail="El servicio de carga devolvió una respuesta inválida.",
         )
-    try:
-        summary = UploadSummary.model_validate(response.json())
-        if summary.byte_count != len(pdf_bytes):
-            raise ValueError("upstream byte count does not match request body")
-    except (ValueError, ValidationError, TypeError) as error:
-        raise HTTPException(
-            status_code=502,
-            detail="El servicio de carga devolvió una respuesta inválida.",
-        ) from error
-    return summary.model_dump()
+
+    async def relay() -> AsyncIterator[bytes]:
+        try:
+            async for chunk in _relay_upload_events(response, pdf_bytes):
+                yield chunk
+        finally:
+            await stream_ctx.__aexit__(None, None, None)
+            await client.aclose()
+
+    return StreamingResponse(relay(), media_type=NDJSON_CONTENT_TYPE)
 
 
 @app.post("/api/query", response_model=QueryResponse)

@@ -48,6 +48,10 @@ BEGIN
             CHECK (sha256 IS NULL OR sha256 ~ '^[0-9a-f]{64}$');
     END IF;
 
+    -- Único cap restante: 50 MiB, porque el PDF se lee completo en memoria
+    -- (mismo valor que MAX_PDF_BYTES en loader/pdf_document.py). Páginas,
+    -- caracteres extraídos y cantidad de chunks quedan sin límite superior:
+    -- los chunks escalan con el documento.
     IF NOT EXISTS (
         SELECT 1
         FROM pg_catalog.pg_constraint
@@ -56,7 +60,7 @@ BEGIN
     ) THEN
         ALTER TABLE public.manual_documents
             ADD CONSTRAINT manual_documents_byte_count_range_check
-            CHECK (byte_count IS NULL OR byte_count BETWEEN 1 AND 10485760);
+            CHECK (byte_count IS NULL OR byte_count BETWEEN 1 AND 52428800);
     END IF;
 
     IF NOT EXISTS (
@@ -67,7 +71,7 @@ BEGIN
     ) THEN
         ALTER TABLE public.manual_documents
             ADD CONSTRAINT manual_documents_page_count_range_check
-            CHECK (page_count IS NULL OR page_count BETWEEN 1 AND 20);
+            CHECK (page_count IS NULL OR page_count >= 1);
     END IF;
 
     IF NOT EXISTS (
@@ -78,7 +82,7 @@ BEGIN
     ) THEN
         ALTER TABLE public.manual_documents
             ADD CONSTRAINT manual_documents_chunk_count_range_check
-            CHECK (chunk_count BETWEEN 0 AND 120);
+            CHECK (chunk_count >= 0);
     END IF;
 
     IF NOT EXISTS (

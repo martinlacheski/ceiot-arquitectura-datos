@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import threading
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 from urllib.parse import quote
 
 import pytest  # type: ignore[import-not-found]
@@ -12,7 +13,10 @@ from fastapi.testclient import TestClient  # type: ignore[import-not-found]
 from starlette.requests import Request  # type: ignore[import-not-found]
 
 from loader import upload_api  # type: ignore[import-not-found]
-from loader.pdf_document import MAX_PDF_BYTES, parse_document  # type: ignore[import-not-found]
+from loader.pdf_document import (  # type: ignore[import-not-found]
+    MAX_PDF_BYTES,
+    ParsedDocument,
+)
 from loader.pdf_storage import UploadUnavailable  # type: ignore[import-not-found]
 
 
@@ -45,13 +49,72 @@ def _client() -> TestClient:
     return TestClient(upload_api.app)
 
 
+def _ndjson_events(response: Any) -> list[dict[str, Any]]:
+    return [json.loads(line) for line in response.text.splitlines() if line.strip()]
+
+
+def _fail_parse(reason: str):
+    def parse(*_args: Any, **_kwargs: Any) -> ParsedDocument:
+        pytest.fail(reason)
+
+    return parse
+
+
+def _fail_stream(reason: str):
+    def stream(*_args: Any, **_kwargs: Any) -> Iterator[dict[str, Any]]:
+        pytest.fail(reason)
+        yield {}  # pragma: no cover - unreachable, keeps this a generator
+
+    return stream
+
+
+def _events_stream(events: list[dict[str, Any]]):
+    def stream(*_args: Any, **_kwargs: Any) -> Iterator[dict[str, Any]]:
+        yield from events
+
+    return stream
+
+
+def _fake_document(title: str) -> ParsedDocument:
+    """A stand-in for ``parse_document`` in tests that only exercise routing/streaming.
+
+    ``PDF_BYTES`` above is not a real PDF, so real parsing would reject it; these tests
+    patch ``upload_api.parse_document`` with this instead so they can focus on the HTTP
+    contract (status codes, title decoding, ndjson framing) without an actual PDF.
+    """
+
+    digest = SUMMARY["sha256"]
+    return ParsedDocument(
+        document_id=SUMMARY["document_id"],
+        version=1,
+        title=title,
+        sha256=digest,
+        byte_count=len(PDF_BYTES),
+        page_count=2,
+        extracted_char_count=321,
+        object_key=SUMMARY["object_key"],
+        chunks=(),
+    )
+
+
+def _patch_parse_document(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        upload_api,
+        "parse_document",
+        lambda pdf_bytes, title, content_type: _fake_document(title),
+    )
+
+
 def test_health_is_light_and_does_not_touch_ingestion(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
+        upload_api, "parse_document", _fail_parse("health must not parse documents")
+    )
+    monkeypatch.setattr(
         upload_api.pdf_storage,
-        "ingest_document",
-        lambda *_args: pytest.fail("health must not initialize ingestion"),
+        "ingest_parsed_document_stream",
+        _fail_stream("health must not initialize ingestion"),
     )
 
     response = _client().get("/health")
@@ -65,8 +128,8 @@ def test_rejects_wrong_mime_before_read_or_ingest(
 ) -> None:
     monkeypatch.setattr(
         upload_api.pdf_storage,
-        "ingest_document",
-        lambda *_args: pytest.fail("wrong MIME must not reach ingestion"),
+        "ingest_parsed_document_stream",
+        _fail_stream("wrong MIME must not reach ingestion"),
     )
 
     response = _client().post(
@@ -107,8 +170,8 @@ def test_content_length_oversize_is_rejected_before_body_read_or_ingest(
 ) -> None:
     monkeypatch.setattr(
         upload_api.pdf_storage,
-        "ingest_document",
-        lambda *_args: pytest.fail("oversize request must not reach ingestion"),
+        "ingest_parsed_document_stream",
+        _fail_stream("oversize request must not reach ingestion"),
     )
     receive_calls = 0
 
@@ -134,7 +197,7 @@ def test_content_length_oversize_is_rejected_before_body_read_or_ingest(
         asyncio.run(upload_api.upload_document(request, None))
 
     assert captured.value.status_code == 413
-    assert captured.value.detail == "El PDF supera el límite de 10 MiB."
+    assert captured.value.detail == "El PDF supera el límite de 50 MiB."
     assert receive_calls == 0
 
 
@@ -143,8 +206,8 @@ def test_streaming_limit_rejects_oversize_without_calling_ingest(
 ) -> None:
     monkeypatch.setattr(
         upload_api.pdf_storage,
-        "ingest_document",
-        lambda *_args: pytest.fail("oversize stream must not reach ingestion"),
+        "ingest_parsed_document_stream",
+        _fail_stream("oversize stream must not reach ingestion"),
     )
     sent = False
 
@@ -176,10 +239,11 @@ def test_streaming_limit_rejects_oversize_without_calling_ingest(
 
 
 def test_bad_pdf_magic_becomes_safe_422(monkeypatch: pytest.MonkeyPatch) -> None:
-    def validate_only(pdf_bytes: bytes, title: str, mime: str) -> None:
-        parse_document(pdf_bytes, title, mime)
-
-    monkeypatch.setattr(upload_api.pdf_storage, "ingest_document", validate_only)
+    monkeypatch.setattr(
+        upload_api.pdf_storage,
+        "ingest_parsed_document_stream",
+        _fail_stream("rejected PDFs must not reach ingestion"),
+    )
 
     response = _client().post(
         "/internal/documents",
@@ -193,16 +257,19 @@ def test_bad_pdf_magic_becomes_safe_422(monkeypatch: pytest.MonkeyPatch) -> None
     }
 
 
-def test_success_passes_raw_bytes_title_and_mime_and_returns_summary(
+def test_success_streams_progress_then_a_final_result_event(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    observed: list[tuple[bytes, str, str]] = []
+    _patch_parse_document(monkeypatch)
+    observed: list[tuple[bytes, str]] = []
 
-    def ingest(pdf_bytes: bytes, title: str, mime: str) -> dict[str, Any]:
-        observed.append((pdf_bytes, title, mime))
-        return SUMMARY
+    def stream(document: ParsedDocument, pdf_bytes: bytes) -> Iterator[dict[str, Any]]:
+        observed.append((pdf_bytes, document.title))
+        yield {"event": "progress", "stage": "pdf_validated", "done": 0, "total": 3}
+        yield {"event": "progress", "stage": "chunks_embedded", "done": 3, "total": 3}
+        yield {"event": "result", **SUMMARY}
 
-    monkeypatch.setattr(upload_api.pdf_storage, "ingest_document", ingest)
+    monkeypatch.setattr(upload_api.pdf_storage, "ingest_parsed_document_stream", stream)
 
     response = _client().post(
         "/internal/documents",
@@ -214,22 +281,26 @@ def test_success_passes_raw_bytes_title_and_mime_and_returns_summary(
     )
 
     assert response.status_code == 200
-    assert response.json() == SUMMARY
-    assert response.json()["chunk_count"] == 3
-    assert len(response.json()["embedding_preview"]) == 6
-    assert observed == [(PDF_BYTES, "Informe de prueba", "application/pdf")]
+    assert response.headers["content-type"].startswith("application/x-ndjson")
+    events = _ndjson_events(response)
+    assert events[0] == {"event": "progress", "stage": "pdf_validated", "done": 0, "total": 3}
+    assert events[-1] == {"event": "result", **SUMMARY}
+    assert events[-1]["chunk_count"] == 3
+    assert len(events[-1]["embedding_preview"]) == 6
+    assert observed == [(PDF_BYTES, "Informe de prueba")]
 
 
 def test_title_header_is_optional_unicode_decoded_and_raw_ascii_compatible(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _patch_parse_document(monkeypatch)
     observed_titles: list[str] = []
 
-    def ingest(_pdf_bytes: bytes, title: str, _mime: str) -> dict[str, Any]:
-        observed_titles.append(title)
-        return SUMMARY
+    def stream(document: ParsedDocument, _pdf_bytes: bytes) -> Iterator[dict[str, Any]]:
+        observed_titles.append(document.title)
+        yield {"event": "result", **SUMMARY}
 
-    monkeypatch.setattr(upload_api.pdf_storage, "ingest_document", ingest)
+    monkeypatch.setattr(upload_api.pdf_storage, "ingest_parsed_document_stream", stream)
     client = _client()
     unicode_title = "Informe térmico ñ.pdf"
 
@@ -269,8 +340,8 @@ def test_title_rejects_invalid_percent_utf8_decoded_length_and_encoded_length(
 ) -> None:
     monkeypatch.setattr(
         upload_api.pdf_storage,
-        "ingest_document",
-        lambda *_args: pytest.fail("invalid title must not reach ingestion"),
+        "ingest_parsed_document_stream",
+        _fail_stream("invalid title must not reach ingestion"),
     )
 
     response = _client().post(
@@ -286,14 +357,17 @@ def test_title_rejects_invalid_percent_utf8_decoded_length_and_encoded_length(
 
 
 @pytest.mark.parametrize("failure", [UploadUnavailable(), RuntimeError("password=secret")])
-def test_service_failures_return_sanitized_503(
+def test_service_failures_after_streaming_starts_become_a_sanitized_error_event(
     failure: Exception,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def fail(*_args: Any) -> dict[str, Any]:
-        raise failure
+    _patch_parse_document(monkeypatch)
 
-    monkeypatch.setattr(upload_api.pdf_storage, "ingest_document", fail)
+    def fail(*_args: Any) -> Iterator[dict[str, Any]]:
+        raise failure
+        yield {}  # pragma: no cover - unreachable, keeps this a generator
+
+    monkeypatch.setattr(upload_api.pdf_storage, "ingest_parsed_document_stream", fail)
 
     response = _client().post(
         "/internal/documents",
@@ -301,39 +375,46 @@ def test_service_failures_return_sanitized_503(
         headers={"content-type": "application/pdf"},
     )
 
-    assert response.status_code == 503
-    assert response.json() == {
-        "detail": "La carga no está disponible temporalmente."
-    }
+    # Validation already passed by the time ingestion runs, so the stream still opens
+    # with 200; the failure surfaces as a final ndjson error event instead.
+    assert response.status_code == 200
+    events = _ndjson_events(response)
+    assert events == [{"event": "error", "detail": "La carga no está disponible temporalmente."}]
     assert "password" not in response.text
     assert "secret" not in response.text
 
-    monkeypatch.setattr(upload_api.pdf_storage, "ingest_document", lambda *_: SUMMARY)
+    monkeypatch.setattr(
+        upload_api.pdf_storage,
+        "ingest_parsed_document_stream",
+        _events_stream([{"event": "result", **SUMMARY}]),
+    )
     after_failure = _client().post(
         "/internal/documents",
         content=PDF_BYTES,
         headers={"content-type": "application/pdf"},
     )
     assert after_failure.status_code == 200
+    assert _ndjson_events(after_failure)[-1] == {"event": "result", **SUMMARY}
 
 
 def test_ingestion_gate_rejects_overlap_and_allows_next_request(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _patch_parse_document(monkeypatch)
     entered = threading.Event()
     release = threading.Event()
     responses: dict[str, Any] = {}
     calls = 0
 
-    def ingest(*_args: Any) -> dict[str, Any]:
+    def stream(*_args: Any) -> Iterator[dict[str, Any]]:
         nonlocal calls
         calls += 1
         if calls == 1:
             entered.set()
             assert release.wait(timeout=5)
-        return SUMMARY
+        yield {"event": "result", **SUMMARY}
 
-    monkeypatch.setattr(upload_api.pdf_storage, "ingest_document", ingest)
+    monkeypatch.setattr(upload_api.pdf_storage, "ingest_parsed_document_stream", stream)
 
     def first_request() -> None:
         responses["first"] = _client().post(
@@ -392,6 +473,9 @@ def test_uploader_compose_service_is_internal_bounded_and_least_privileged() -> 
     assert "SEAWEEDFS_S3_ENDPOINT: http://seaweedfs:8333" in uploader
     assert "MANUAL_BUCKET: ceiot-manuales" in uploader
     assert "MODELO_EMBEDDING: BAAI/bge-m3" in uploader
+    # Los hilos de PyTorch deben coincidir con las CPU asignadas al servicio.
+    assert 'cpus: "2.0"' in uploader
+    assert 'OMP_NUM_THREADS: "2"' in uploader
     assert "embedding_model_cache:/models/huggingface" in uploader
     assert {"POSTGRES_USER", "POSTGRES_PASSWORD", "OPENROUTER_API_KEY"}.isdisjoint(
         environment_keys

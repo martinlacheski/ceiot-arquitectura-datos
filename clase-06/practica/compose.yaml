@@ -115,6 +115,10 @@ services:
       MANUAL_BUCKET: ceiot-manuales
       MODELO_EMBEDDING: BAAI/bge-m3
       HF_HOME: /models/huggingface
+      # Debe coincidir con `cpus`. Sin este tope PyTorch lanza un hilo por
+      # núcleo del host: medido con 10 hilos sobre 2 CPU, ~3 s por fragmento
+      # y memoria creciente entre cargas; con 2 hilos, ~1,2 s y memoria estable.
+      OMP_NUM_THREADS: "2"
     volumes:
       - embedding_model_cache:/models/huggingface
     expose:

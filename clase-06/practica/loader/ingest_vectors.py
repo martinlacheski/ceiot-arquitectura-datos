@@ -23,6 +23,12 @@ from shared.embeddings import (  # type: ignore[import-not-found]
 
 SEED_DOCUMENT_ID = "env-x-manual"
 
+# Same fixed batch size as loader/pdf_storage.py (measured there: batch 4 keeps peak
+# RSS flat at 3.21 GiB vs 3.88 GiB for batch 32). This seed manual is always exactly
+# 4 chunks, so batching is a no-op here in practice, but it keeps both call sites
+# consistent if the seed ever grows.
+EMBEDDING_BATCH_SIZE = 4
+
 EXPECTED_SECTIONS = (
     (1, "Preparación y condiciones"),
     (1, "Recalibración tras reemplazo de batería"),
@@ -263,10 +269,15 @@ def main() -> None:
 
         print(f"Cargando modelo local {model_name}; la primera descarga puede tardar.")
         model = embedding_model()
-        embeddings = model.encode(
-            [passage_text(chunk) for chunk in chunks],
-            normalize_embeddings=True,
-        )
+        embeddings: list[Any] = []
+        for start in range(0, len(chunks), EMBEDDING_BATCH_SIZE):
+            batch = chunks[start : start + EMBEDDING_BATCH_SIZE]
+            embeddings.extend(
+                model.encode(
+                    [passage_text(chunk) for chunk in batch],
+                    normalize_embeddings=True,
+                )
+            )
         store_chunks(connection, chunks, embeddings, model_name)
 
     print(

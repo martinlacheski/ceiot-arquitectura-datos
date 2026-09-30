@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -49,11 +50,32 @@ def _client() -> TestClient:
     return TestClient(web_app.app)
 
 
+def _ndjson_events(response: Any) -> list[dict[str, Any]]:
+    return [json.loads(line) for line in response.text.splitlines() if line.strip()]
+
+
+def _ndjson_body(events: list[dict[str, Any]]) -> bytes:
+    return "".join(json.dumps(event) + "\n" for event in events).encode("utf-8")
+
+
+def _ndjson_response(events: list[dict[str, Any]]) -> httpx.Response:
+    return httpx.Response(
+        200,
+        content=_ndjson_body(events),
+        headers={"content-type": "application/x-ndjson"},
+    )
+
+
 def _install_proxy(monkeypatch: pytest.MonkeyPatch, handler: httpx.MockTransport) -> None:
     class FakeAsyncClient(_HTTPX_ASYNC_CLIENT):
         def __init__(self, **kwargs: Any) -> None:
-            assert kwargs["timeout"] == pytest.approx(240.0)
-            super().__init__(transport=handler, timeout=kwargs["timeout"])
+            timeout = kwargs["timeout"]
+            assert isinstance(timeout, httpx.Timeout)
+            assert timeout.connect == pytest.approx(10.0)
+            assert timeout.write == pytest.approx(30.0)
+            assert timeout.read == pytest.approx(120.0)
+            assert timeout.pool == pytest.approx(10.0)
+            super().__init__(transport=handler, timeout=timeout)
 
     monkeypatch.setattr(httpx, "AsyncClient", FakeAsyncClient)
 
@@ -152,14 +174,22 @@ def test_text_to_sql_rejects_document_filter_before_openrouter_and_bad_id_is_422
     assert invalid.status_code == 422
 
 
-def test_public_upload_proxies_only_bounded_pdf_to_fixed_internal_url_with_unicode_title(
+def test_public_upload_streams_progress_then_result_for_fixed_internal_url_with_unicode_title(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     observed: list[httpx.Request] = []
+    upstream_events = [
+        {"event": "progress", "stage": "pdf_validated", "done": 0, "total": 3},
+        {"event": "progress", "stage": "chunks_embedded", "done": 3, "total": 3},
+        {"event": "progress", "stage": "s3_stored", "done": 3, "total": 3},
+        {"event": "progress", "stage": "s3_verified", "done": 3, "total": 3},
+        {"event": "progress", "stage": "postgres_indexed", "done": 3, "total": 3},
+        {"event": "result", **SUMMARY},
+    ]
 
     def handler(request: httpx.Request) -> httpx.Response:
         observed.append(request)
-        return httpx.Response(200, json=SUMMARY)
+        return _ndjson_response(upstream_events)
 
     _install_proxy(monkeypatch, httpx.MockTransport(handler))
     title = "Informe térmico ñ.pdf"
@@ -173,7 +203,10 @@ def test_public_upload_proxies_only_bounded_pdf_to_fixed_internal_url_with_unico
     )
 
     assert response.status_code == 200
-    assert response.json() == SUMMARY
+    assert response.headers["content-type"].startswith("application/x-ndjson")
+    events = _ndjson_events(response)
+    assert events[:-1] == upstream_events[:-1]
+    assert events[-1] == {"event": "result", **SUMMARY}
     assert len(observed) == 1
     request = observed[0]
     assert str(request.url) == "http://uploader:8007/internal/documents"
@@ -267,33 +300,32 @@ def test_public_upload_maps_only_bounded_upstream_statuses(
         assert detail[:20] not in response.text
 
 
-@pytest.mark.parametrize(
-    "payload",
-    [
-        {"secret": "upstream-credential"},
-        {},
-        ["upstream-credential"],
-    ],
-)
 def test_public_upload_rejects_unknown_missing_and_non_object_success(
-    payload: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _install_proxy(
-        monkeypatch,
-        httpx.MockTransport(lambda _request: httpx.Response(200, json=payload)),
-    )
+    for payload in [{"secret": "upstream-credential"}, {}, ["upstream-credential"]]:
+        _install_proxy(
+            monkeypatch,
+            httpx.MockTransport(lambda _request, payload=payload: _ndjson_response([payload])),
+        )
 
-    response = _client().post(
-        "/api/documents", content=PDF_BYTES, headers={"content-type": "application/pdf"}
-    )
+        response = _client().post(
+            "/api/documents", content=PDF_BYTES, headers={"content-type": "application/pdf"}
+        )
 
-    assert response.status_code == 502
-    assert response.json() == {
-        "detail": "El servicio de carga devolvió una respuesta inválida."
-    }
-    assert "secret" not in response.text
-    assert "credential" not in response.text
+        # The stream already opened with 200 by the time this line is checked, so an
+        # unrecognized/incoherent upstream line becomes a final error *event*, not an
+        # HTTP error status.
+        assert response.status_code == 200
+        events = _ndjson_events(response)
+        assert events == [
+            {
+                "event": "error",
+                "detail": "El servicio de carga devolvió una respuesta inválida.",
+            }
+        ]
+        assert "secret" not in response.text
+        assert "credential" not in response.text
 
 
 @pytest.mark.parametrize(
@@ -304,8 +336,7 @@ def test_public_upload_rejects_unknown_missing_and_non_object_success(
         ("sha256", "f" * 64),
         ("embedding_preview", [0.1, 0.2, float("nan"), 0.4, 0.5, 0.6]),
         ("page_count", 0),
-        ("extracted_char_count", 200_001),
-        ("chunk_count", 121),
+        ("chunk_count", 0),
         ("dimension", 768),
         ("byte_count", len(PDF_BYTES) + 1),
     ],
@@ -315,20 +346,24 @@ def test_public_upload_rejects_incoherent_or_out_of_contract_success(
     invalid_value: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    payload = {**SUMMARY, field: invalid_value}
+    payload = {"event": "result", **SUMMARY, field: invalid_value}
     _install_proxy(
         monkeypatch,
-        httpx.MockTransport(lambda _request: httpx.Response(200, json=payload)),
+        httpx.MockTransport(lambda _request: _ndjson_response([payload])),
     )
 
     response = _client().post(
         "/api/documents", content=PDF_BYTES, headers={"content-type": "application/pdf"}
     )
 
-    assert response.status_code == 502
-    assert response.json() == {
-        "detail": "El servicio de carga devolvió una respuesta inválida."
-    }
+    assert response.status_code == 200
+    events = _ndjson_events(response)
+    assert events == [
+        {
+            "event": "error",
+            "detail": "El servicio de carga devolvió una respuesta inválida.",
+        }
+    ]
     assert "secret" not in response.text
     assert PDF_SHA256 not in response.text
 
@@ -348,13 +383,55 @@ def test_public_upload_transport_and_invalid_success_are_sanitized(
 
     _install_proxy(
         monkeypatch,
-        httpx.MockTransport(lambda _request: httpx.Response(200, content=b"not-json")),
+        httpx.MockTransport(
+            lambda _request: httpx.Response(
+                200, content=b"not-json", headers={"content-type": "application/x-ndjson"}
+            )
+        ),
     )
     response = _client().post(
         "/api/documents", content=PDF_BYTES, headers={"content-type": "application/pdf"}
     )
-    assert response.status_code == 502
+    assert response.status_code == 200
+    events = _ndjson_events(response)
+    assert events == [
+        {
+            "event": "error",
+            "detail": "El servicio de carga devolvió una respuesta inválida.",
+        }
+    ]
     assert "not-json" not in response.text
+
+
+def test_public_upload_relays_a_mid_stream_error_event_with_bounded_length(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The uploader only ever emits already-sanitized Spanish error text (see
+    # loader.upload_api._stream_error_detail); the proxy's job here is just to keep
+    # relaying it as a stream event (not turn it into an HTTP error status, since 200
+    # already started) and to bound its length defensively.
+    long_detail = "La carga no está disponible temporalmente. " + "x" * 400
+    _install_proxy(
+        monkeypatch,
+        httpx.MockTransport(
+            lambda _request: _ndjson_response(
+                [
+                    {"event": "progress", "stage": "pdf_validated", "done": 0, "total": 3},
+                    {"event": "error", "detail": long_detail},
+                ]
+            )
+        ),
+    )
+
+    response = _client().post(
+        "/api/documents", content=PDF_BYTES, headers={"content-type": "application/pdf"}
+    )
+
+    assert response.status_code == 200
+    events = _ndjson_events(response)
+    assert events[0] == {"event": "progress", "stage": "pdf_validated", "done": 0, "total": 3}
+    assert events[1]["event"] == "error"
+    assert len(events[1]["detail"]) <= 300
 
 
 def test_app_compose_depends_on_healthy_uploader_without_writer_credentials() -> None:

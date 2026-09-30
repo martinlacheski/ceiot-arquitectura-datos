@@ -10,11 +10,11 @@ from dataclasses import dataclass
 
 from pypdf import PdfReader  # type: ignore[import-not-found]
 
-MAX_PDF_BYTES = 10 * 1024 * 1024
-MAX_PAGES = 20
-MAX_PAGE_CHARS = 20_000
-MAX_TOTAL_CHARS = 200_000
-MAX_CHUNKS = 120
+# Single remaining cap: the PDF is read fully into memory (app proxy, uploader
+# and parser all agree on this value; see also the DB CHECK in
+# postgres/init/05-document-upload.sql). Page count, per-page/total extracted
+# characters and chunk count are unbounded: chunks scale with the document.
+MAX_PDF_BYTES = 50 * 1024 * 1024
 MAX_CHUNK_CHARS = 1_200
 CHUNK_OVERLAP_CHARS = 150
 MAX_TITLE_CHARS = 200
@@ -132,8 +132,6 @@ def _chunks_from_pages(
         if not normalized:
             continue
         for fragment_number, content in enumerate(_page_fragments(normalized), start=1):
-            if len(chunks) >= MAX_CHUNKS:
-                raise PDFRejected("El PDF supera el límite de 120 fragmentos.")
             chunks.append(
                 PageChunk(
                     document_id=document_id,
@@ -157,7 +155,7 @@ def parse_document(pdf_bytes: bytes, title: str, content_type: str) -> ParsedDoc
 
     byte_count = len(pdf_bytes)
     if not 1 <= byte_count <= MAX_PDF_BYTES:
-        raise PDFRejected("El PDF debe contener entre 1 byte y 10 MiB.")
+        raise PDFRejected("El PDF debe contener entre 1 byte y 50 MiB.")
     if not pdf_bytes.startswith(b"%PDF"):
         raise PDFRejected("El archivo no tiene la firma de un PDF válido.")
 
@@ -173,8 +171,8 @@ def parse_document(pdf_bytes: bytes, title: str, content_type: str) -> ParsedDoc
         page_count = len(reader.pages)
     except Exception as error:
         raise PDFRejected("No se pudo interpretar el PDF.") from error
-    if not 1 <= page_count <= MAX_PAGES:
-        raise PDFRejected("El PDF debe tener entre 1 y 20 páginas.")
+    if page_count < 1:
+        raise PDFRejected("El PDF debe tener al menos 1 página.")
 
     page_texts: list[str] = []
     extracted_char_count = 0
@@ -183,15 +181,7 @@ def parse_document(pdf_bytes: bytes, title: str, content_type: str) -> ParsedDoc
             page_text = reader.pages[page_index].extract_text() or ""
         except Exception as error:
             raise PDFRejected("No se pudo extraer el texto del PDF.") from error
-        if len(page_text) > MAX_PAGE_CHARS:
-            raise PDFRejected(
-                "Una página supera el límite de 20.000 caracteres extraídos."
-            )
         extracted_char_count += len(page_text)
-        if extracted_char_count > MAX_TOTAL_CHARS:
-            raise PDFRejected(
-                "El PDF supera el límite de 200.000 caracteres extraídos."
-            )
         page_texts.append(page_text)
 
     combined_text = " ".join(_normalized_text(text) for text in page_texts)

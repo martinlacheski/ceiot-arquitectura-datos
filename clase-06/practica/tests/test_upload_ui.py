@@ -13,16 +13,21 @@ def test_upload_controls_and_limits_are_explicit_and_accessible() -> None:
     assert '<form id="upload-form">' in html
     assert 'id="pdf-file" name="pdf" type="file"' in html
     assert 'accept=".pdf,application/pdf"' in html
-    assert "10 MiB" in html and "10485760" in html
-    assert all(limit in html for limit in ("20 páginas", "200.000 caracteres", "120 fragmentos"))
-    assert "MAX_PAGE_CHARS=20000" in html
-    assert "20.000 caracteres extraídos por página" in html
-    assert "sólo texto" in html and "OCR" in html and "cifrados" in html
+    assert "50 MiB" in html and "52428800" in html
+    assert "Sin límite de páginas" in html
+    assert "segundos por fragmento" in html
+    assert "sólo texto extraíble" in html and "OCR" in html and "cifrados" in html
     assert "fetch('/api/documents'" in html
     assert "body: file" in html
     assert "'Content-Type': 'application/pdf'" in html
     assert "'X-Document-Title': encodeURIComponent(file.name)" in html
     assert all(str(status) in html for status in (422, 413, 503, 429))
+    assert 'id="upload-progress"' in html
+    assert "readUploadEventStream" in html
+    assert "response.body.getReader()" in html
+    assert "event.event === 'progress'" in html
+    assert "event.event === 'result'" in html
+    assert "event.event === 'error'" in html
 
 
 def test_catalog_inspection_and_query_filter_are_rendered_safely() -> None:
@@ -104,8 +109,8 @@ def test_catalog_and_inspection_failures_are_separate_and_report_partial_upload(
     assert "document.querySelector('#document-metadata').replaceChildren()" in inspect_source
     assert "document.querySelector('#document-pages').replaceChildren()" in inspect_source
     assert "return true" in inspect_source and "return false" in inspect_source
-    assert "const catalogLoaded = await loadDocuments(payload.document_id)" in html
-    assert "const documentInspected = await inspectDocument(payload.document_id)" in html
+    assert "const catalogLoaded = await loadDocuments(result.document_id)" in html
+    assert "const documentInspected = await inspectDocument(result.document_id)" in html
     assert "pero no se pudo actualizar el catálogo" in html
     assert "pero no se pudo completar la inspección" in html
     assert "pero no se pudieron actualizar el catálogo ni la inspección" in html

@@ -89,17 +89,17 @@ def test_document_upload_columns_and_constraints_are_installed() -> None:
         "manual_documents_byte_count_range_check"
     ]
     assert "byte_count >= 1" in byte_count_constraint
-    assert "byte_count <= 10485760" in byte_count_constraint
+    assert "byte_count <= 52428800" in byte_count_constraint
     page_count_constraint = constraints[
         "manual_documents_page_count_range_check"
     ]
     assert "page_count >= 1" in page_count_constraint
-    assert "page_count <= 20" in page_count_constraint
+    assert "page_count <=" not in page_count_constraint
     chunk_count_constraint = constraints[
         "manual_documents_chunk_count_range_check"
     ]
     assert "chunk_count >= 0" in chunk_count_constraint
-    assert "chunk_count <= 120" in chunk_count_constraint
+    assert "chunk_count <=" not in chunk_count_constraint
     assert "chunk_count > 0" in constraints[
         "manual_documents_indexed_metadata_check"
     ]

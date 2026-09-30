@@ -45,9 +45,10 @@
       <label for="pdf-file">Documento PDF
         <input id="pdf-file" name="pdf" type="file" accept=".pdf,application/pdf" aria-describedby="pdf-help" required>
       </label>
-      <p id="pdf-help" class="note">Máximo 10 MiB. El navegador hace una comprobación temprana, pero el servidor conserva la autoridad. Se admite sólo texto: hasta 20 páginas; el parser aplica MAX_PAGE_CHARS=20000, es decir, 20.000 caracteres extraídos por página, además de 200.000 caracteres extraídos en total y 120 fragmentos; no se realiza OCR y se rechazan PDF cifrados.</p>
+      <p id="pdf-help" class="note">Máximo 50 MiB (el PDF se lee completo en memoria); el navegador hace una comprobación temprana, pero el servidor conserva la autoridad. Sin límite de páginas ni de fragmentos: la cantidad de fragmentos crece con el documento. La indexación tarda alrededor de 1,2 segundos por fragmento; un datasheet de unas 50 páginas tarda cerca de 2 minutos. Se admite sólo texto extraíble, no se realiza OCR y se rechazan PDF cifrados. Mostramos el progreso mientras se indexa.</p>
       <button id="upload-submit" type="submit">Cargar PDF</button>
       <p id="upload-status" role="status" aria-live="polite"></p>
+      <p id="upload-progress" role="status" aria-live="polite"></p>
       <p id="upload-error" class="error" role="alert" hidden></p>
     </form>
     <section id="upload-result" aria-labelledby="upload-result-title" hidden>
@@ -132,7 +133,14 @@
   </section>
 </main>
 <script>
-  const MAX_PDF_BYTES = 10485760;
+  const MAX_PDF_BYTES = 52428800;
+  const UPLOAD_STAGE_LABELS = {
+    pdf_validated: 'PDF validado',
+    chunks_embedded: 'Generando embeddings',
+    s3_stored: 'Guardando en almacenamiento',
+    s3_verified: 'Verificando almacenamiento',
+    postgres_indexed: 'Indexando en la base de datos'
+  };
   const MANUAL_SEED_DOCUMENT_ID = "env-x-manual";
   const MODE_GUIDES = {
     rag: 'Busca con el modelo de embeddings local (BAAI/bge-m3) en el manual o PDF seleccionado (o en todos) y muestra la fuente con página, fragmento y distancia. OpenRouter sintetiza la respuesta sólo si encuentra fragmentos.',
@@ -339,7 +347,7 @@
     const file = document.querySelector('#pdf-file').files[0];
     if (!file) return;
     if (file.size > MAX_PDF_BYTES) {
-      uploadError.textContent = 'El PDF supera el límite de 10 MiB.';
+      uploadError.textContent = 'El PDF supera el límite de 50 MiB.';
       uploadError.hidden = false;
       return;
     }
@@ -351,6 +359,7 @@
     }
     uploadSubmit.disabled = true;
     uploadStatus.textContent = 'Cargando, fragmentando e indexando…';
+    document.querySelector('#upload-progress').textContent = '';
     try {
       const response = await fetch('/api/documents', {
         method: 'POST',
@@ -360,19 +369,20 @@
         },
         body: file
       });
-      const payload = await readJson(response);
       if (!response.ok) {
+        const payload = await readJson(response);
         const fallbackByStatus = {
-          413: 'El PDF supera el límite de 10 MiB.',
+          413: 'El PDF supera el límite de 50 MiB.',
           422: 'El PDF no pudo ser procesado.',
           429: 'Ya hay una carga en proceso; intentá nuevamente más tarde.',
           503: 'La carga no está disponible temporalmente.'
         };
         throw new Error(safeDetail(payload, fallbackByStatus[response.status] || 'La carga no pudo completarse.'));
       }
-      renderUploadSummary(payload);
-      const catalogLoaded = await loadDocuments(payload.document_id);
-      const documentInspected = await inspectDocument(payload.document_id);
+      const result = await readUploadEventStream(response);
+      renderUploadSummary(result);
+      const catalogLoaded = await loadDocuments(result.document_id);
+      const documentInspected = await inspectDocument(result.document_id);
       if (catalogLoaded && documentInspected) {
         uploadStatus.textContent = 'Carga completada e indexada.';
       } else if (!catalogLoaded && !documentInspected) {
@@ -390,6 +400,52 @@
       uploadSubmit.disabled = false;
     }
   });
+
+  // Lee la respuesta application/x-ndjson del servidor línea por línea: cada línea es
+  // un evento {"event": "progress"|"result"|"error", ...}. Actualiza la barra de
+  // progreso textual a medida que llegan eventos, en vez de esperar a que termine
+  // toda la carga, y devuelve el payload del evento "result" final.
+  async function readUploadEventStream(response) {
+    const progressText = document.querySelector('#upload-progress');
+    if (!response.body || !response.body.getReader) {
+      const payload = await readJson(response);
+      if (payload && payload.event === 'result') return payload;
+      throw new Error('La carga no pudo completarse.');
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let result = null;
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let newlineIndex = buffer.indexOf('\n');
+      while (newlineIndex >= 0) {
+        const line = buffer.slice(0, newlineIndex).trim();
+        buffer = buffer.slice(newlineIndex + 1);
+        newlineIndex = buffer.indexOf('\n');
+        if (!line) continue;
+        let event;
+        try {
+          event = JSON.parse(line);
+        } catch (_error) {
+          throw new Error('La carga no pudo completarse.');
+        }
+        if (event.event === 'progress') {
+          const label = UPLOAD_STAGE_LABELS[event.stage] || event.stage;
+          progressText.textContent = `Indexando fragmento ${event.done} de ${event.total} · ${label}…`;
+        } else if (event.event === 'result') {
+          result = event;
+        } else if (event.event === 'error') {
+          throw new Error(typeof event.detail === 'string' ? event.detail : 'La carga no pudo completarse.');
+        }
+      }
+    }
+    if (!result) throw new Error('La carga no pudo completarse.');
+    progressText.textContent = `Fragmentos indexados: ${result.chunk_count} de ${result.chunk_count}.`;
+    return result;
+  }
 
   function updateDocumentFilter() {
     const textToSql = mode.value === 'text-to-sql';

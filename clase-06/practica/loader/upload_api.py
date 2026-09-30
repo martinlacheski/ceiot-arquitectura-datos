@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
+import queue
 import re
 import threading
+from collections.abc import AsyncIterator
 from typing import Any
 from urllib.parse import unquote
 
@@ -13,17 +17,26 @@ from fastapi import (  # type: ignore[import-not-found]
     HTTPException,
     Request,
 )
+from fastapi.responses import StreamingResponse  # type: ignore[import-not-found]
 from starlette.concurrency import run_in_threadpool  # type: ignore[import-not-found]
 
 from loader import pdf_storage
-from loader.pdf_document import MAX_PDF_BYTES, MAX_TITLE_CHARS, PDFRejected
+from loader.pdf_document import (
+    MAX_PDF_BYTES,
+    MAX_TITLE_CHARS,
+    ParsedDocument,
+    PDFRejected,
+    parse_document,
+)
 from loader.pdf_storage import UploadUnavailable
 
 PDF_CONTENT_TYPE = "application/pdf"
+NDJSON_CONTENT_TYPE = "application/x-ndjson"
 DEFAULT_TITLE = "Documento PDF"
 MAX_ENCODED_TITLE_CHARS = 1200
 _BAD_PERCENT_ESCAPE = re.compile(r"%(?![0-9A-Fa-f]{2})")
 _INGESTION_GATE = threading.Lock()
+_GENERIC_UNAVAILABLE = "La carga no está disponible temporalmente."
 
 app = FastAPI(title="Internal PDF uploader", docs_url=None, redoc_url=None)
 
@@ -41,7 +54,7 @@ def _reject_known_oversize(request: Request) -> None:
     except ValueError:
         return
     if content_length > MAX_PDF_BYTES:
-        raise HTTPException(status_code=413, detail="El PDF supera el límite de 10 MiB.")
+        raise HTTPException(status_code=413, detail="El PDF supera el límite de 50 MiB.")
 
 
 async def _bounded_body(request: Request) -> bytes:
@@ -50,7 +63,7 @@ async def _bounded_body(request: Request) -> bytes:
         if len(body) + len(chunk) > MAX_PDF_BYTES:
             raise HTTPException(
                 status_code=413,
-                detail="El PDF supera el límite de 10 MiB.",
+                detail="El PDF supera el límite de 50 MiB.",
             )
         body.extend(chunk)
     return bytes(body)
@@ -83,6 +96,46 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+def _stream_error_detail(error: Exception) -> str:
+    if isinstance(error, UploadUnavailable):
+        return str(error)
+    return _GENERIC_UNAVAILABLE
+
+
+async def _event_stream(document: ParsedDocument, pdf_bytes: bytes) -> AsyncIterator[bytes]:
+    """Run ingestion in a worker thread and relay each event as one ndjson line.
+
+    Embedding, S3 and PostgreSQL calls are all blocking; running them in a thread and
+    bridging through a queue lets each progress event reach the client as soon as it is
+    produced, instead of only after the whole request completes. The ingestion gate is
+    released here, once this generator is fully drained (success or failure).
+    """
+
+    events: queue.Queue[Any] = queue.Queue()
+    sentinel = object()
+
+    def runner() -> None:
+        try:
+            for event in pdf_storage.ingest_parsed_document_stream(document, pdf_bytes):
+                events.put(event)
+        except Exception as error:  # noqa: BLE001 - converted to a sanitized error event
+            events.put({"event": "error", "detail": _stream_error_detail(error)})
+        finally:
+            events.put(sentinel)
+
+    thread = threading.Thread(target=runner, daemon=True)
+    thread.start()
+    loop = asyncio.get_event_loop()
+    try:
+        while True:
+            item = await loop.run_in_executor(None, events.get)
+            if item is sentinel:
+                break
+            yield (json.dumps(item) + "\n").encode("utf-8")
+    finally:
+        _INGESTION_GATE.release()
+
+
 @app.post("/internal/documents")
 async def upload_document(
     request: Request,
@@ -91,8 +144,15 @@ async def upload_document(
         alias="X-Document-Title",
         max_length=MAX_ENCODED_TITLE_CHARS,
     ),
-) -> dict[str, Any]:
-    """Read one raw PDF into a bounded buffer and ingest it off the event loop."""
+) -> StreamingResponse:
+    """Validate and parse one raw PDF, then stream ingestion progress as ndjson.
+
+    Validation/parsing (content type, size, PDF signature, encryption, extractable
+    text) happens entirely before any response is sent, so rejections keep returning
+    their normal status code and JSON error body. Only once the document is accepted
+    does this switch to a 200 ``application/x-ndjson`` stream of progress events
+    followed by a final ``result`` or ``error`` event.
+    """
 
     if _declared_mime(request) != PDF_CONTENT_TYPE:
         raise HTTPException(
@@ -110,22 +170,19 @@ async def upload_document(
 
     try:
         pdf_bytes = await _bounded_body(request)
-        return await run_in_threadpool(
-            pdf_storage.ingest_document,
-            pdf_bytes,
-            title,
-            PDF_CONTENT_TYPE,
+        document = await run_in_threadpool(
+            parse_document, pdf_bytes, title, PDF_CONTENT_TYPE
         )
     except PDFRejected as error:
+        _INGESTION_GATE.release()
         raise HTTPException(status_code=422, detail=error.reason) from error
-    except UploadUnavailable as error:
-        raise HTTPException(status_code=503, detail=str(error)) from error
     except HTTPException:
+        _INGESTION_GATE.release()
         raise
     except Exception as error:
-        raise HTTPException(
-            status_code=503,
-            detail="La carga no está disponible temporalmente.",
-        ) from error
-    finally:
         _INGESTION_GATE.release()
+        raise HTTPException(status_code=503, detail=_GENERIC_UNAVAILABLE) from error
+
+    return StreamingResponse(
+        _event_stream(document, pdf_bytes), media_type=NDJSON_CONTENT_TYPE
+    )
