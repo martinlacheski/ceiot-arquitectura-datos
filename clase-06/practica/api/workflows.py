@@ -26,37 +26,14 @@ from shared.sql_query import (  # type: ignore[import-not-found]
     QueryResult,
     execute_validated_sql,
 )
+from shared.sql_schema import SchemaPrompt, schema_prompt  # type: ignore[import-not-found]
 
 
 class ServiceUnavailable(RuntimeError):
     """Falla acotada de infraestructura, segura para exponer por la API."""
 
 
-SQL_SCHEMA = """lab_read.measurements(
-  device_id text, measured_at timestamptz, variable text, value numeric,
-  unit text, quality text, location_id text
-)
-lab_read.devices(
-  device_id text, model text, location_id text, depends_on_device_id text
-)
-lab_read.locations(
-  location_id text, name text, building text
-)
-Valores exactos conocidos (respetá mayúsculas y minúsculas):
-- variable: co2, temperature, humidity
-- quality: GOOD, SUSPECT
-- device_id: AIR-002, AMB-001, ACT-003, AMB-005
-- model: ENV-X (AMB-001 y AMB-005), AirQuality-Pro (AIR-002)
-- location_id: AULA-204, LAB-101, CIUDAD-UNIV
-- lab_read.locations.name: Aula 204, Laboratorio 101, Ciudad Universitaria
-Las comparaciones de texto en PostgreSQL son case-sensitive: nunca conviertas co2 a CO2.
-Predicado seguro de ejemplo: variable = 'co2'; location_id = 'AULA-204'.
-Hay datos recientes de ENV-X (AMB-001) para las últimas 48 horas relativas a
-now(): usá now() - INTERVAL '<n> hours|days|minutes' (esa es la ÚNICA forma de
-tiempo relativo admitida) cuando la pregunta pida un período reciente, por
-ejemplo measured_at >= now() - INTERVAL '24 hours'. Como valor secundario, y
-sólo si la pregunta pide una fecha histórica exacta, también existen ocho
-mediciones fijas del día UTC 2025-05-12T00:00:00Z a 2025-05-13T00:00:00Z."""
+# El esquema que recibe el modelo se lee de la base: ver shared/sql_schema.py.
 
 
 def retrieve_manual(
@@ -139,7 +116,9 @@ def _context(chunks: list[dict[str, Any]]) -> str:
     )
 
 
-def _generate_sql(question: str, client: OpenRouterClient) -> str:
+def _generate_sql(
+    question: str, client: OpenRouterClient, schema: SchemaPrompt
+) -> str:
     raw = client.chat(
         [
             {
@@ -148,7 +127,7 @@ def _generate_sql(question: str, client: OpenRouterClient) -> str:
                     "Generá exactamente un SELECT PostgreSQL pequeño y nada más. "
                     "Debe consultar una sola vista lab_read, sin JOIN, CTE ni subconsultas, "
                     "usar sólo AVG/COUNT/MIN/MAX/SUM si hace falta y terminar en LIMIT 1..50. "
-                    f"Esquema exacto:\n{SQL_SCHEMA}"
+                    f"Esquema exacto:\n{schema.text}"
                 ),
             },
             {"role": "user", "content": question},
@@ -237,14 +216,15 @@ def run_text_to_sql(
 ) -> dict[str, Any]:
     del top_k
     chat = client or OpenRouterClient()
-    generated = _generate_sql(question, chat)
+    schema = schema_prompt()
+    generated = _generate_sql(question, chat, schema)
     validated = validate_sql(generated)
     result = _execute_sql_safely(validated)
     rows = list(result.rows)
     has_data = bool(rows) and any(
         value is not None for row in rows for value in row.values()
     )
-    trace = ["openrouter-sql", "sqlglot-validado", "ai_readonly"]
+    trace = [f"esquema-{schema.source}", "openrouter-sql", "sqlglot-validado", "ai_readonly"]
     if has_data:
         answer = _phrase_sql_answer(question, rows, chat)
         trace.append("openrouter-respuesta")
@@ -334,10 +314,11 @@ def run_integrated(
     validated = None
     result = None
     if telemetry_question is not None:
-        generated = _generate_sql(telemetry_question, chat)
+        schema = schema_prompt()
+        generated = _generate_sql(telemetry_question, chat, schema)
         validated = validate_sql(generated)
         result = _execute_sql_safely(validated)
-        trace += ["openrouter-sql", "sqlglot-validado", "ai_readonly"]
+        trace += [f"esquema-{schema.source}", "openrouter-sql", "sqlglot-validado", "ai_readonly"]
 
     chunks: list[dict[str, Any]] = []
     if manual_question is not None:

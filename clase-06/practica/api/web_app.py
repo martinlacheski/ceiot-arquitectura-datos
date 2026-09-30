@@ -41,6 +41,7 @@ from shared import document_catalog  # type: ignore[import-not-found]
 from shared.rag_connection import validate_document_id  # type: ignore[import-not-found]
 from shared.retrieval import MAX_TOP_K  # type: ignore[import-not-found]
 from shared.sql_guard import SQLRejected  # type: ignore[import-not-found]
+from shared.sql_schema import schema_prompt  # type: ignore[import-not-found]
 
 app = FastAPI(title="Laboratorio IoT Clase 06", version="1.0.0")
 INDEX_HTML = Path(__file__).with_name("static") / "index.html"
@@ -163,6 +164,13 @@ def root() -> HTMLResponse:
 def health() -> dict[str, str]:
     # Deliberadamente no carga E5, no consulta la base y no llama a OpenRouter.
     return {"status": "ok"}
+
+
+@app.get("/api/sql-schema")
+def sql_schema() -> dict[str, str]:
+    # Muestra exactamente el esquema que Text-to-SQL envía al modelo.
+    prompt = schema_prompt()
+    return {"source": prompt.source, "text": prompt.text}
 
 
 def _declared_mime(request: Request) -> str:
