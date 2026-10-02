@@ -91,3 +91,10 @@ def test_redisinsight_connects_to_redis_and_is_local_only() -> None:
     assert "condition: service_healthy" in block
     assert "\n  redisinsight_data:" in COMPOSE.split("\nvolumes:\n", 1)[1]
     assert _env_example().get("REDISINSIGHT_PORT") == "5540"
+
+
+def test_open_text_to_sql_grants_are_part_of_database_init() -> None:
+    assert (
+        "./postgres/init/06-ai-open-access.sql:/docker-entrypoint-initdb.d/06-ai-open-access.sql:ro"
+        in _service("postgres")
+    )

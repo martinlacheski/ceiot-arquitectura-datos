@@ -1,4 +1,4 @@
-"""Ejecución acotada de consultas aprobadas por :mod:`sql_guard`."""
+"""Ejecución acotada de SQL generado, con la base como frontera de seguridad."""
 
 from __future__ import annotations
 
@@ -25,10 +25,8 @@ class QueryResult:
     columns: tuple[str, ...]
     rows: tuple[dict[str, Any], ...]
     byte_count: int
-
-
-class ResultLimitExceeded(RuntimeError):
-    """El resultado excede un límite local aunque la consulta fuese válida."""
+    # True cuando había más filas (o bytes) que el máximo y se recortaron.
+    truncated: bool = False
 
 
 def _connection_settings() -> dict[str, object]:
@@ -51,13 +49,17 @@ def _connection_settings() -> dict[str, object]:
 
 
 def execute_validated_sql(validated: ValidatedSQL) -> QueryResult:
-    """Ejecuta SQL validado como ``ai_readonly`` y siempre revierte la sesión."""
+    """Ejecuta SQL de lectura como ``ai_readonly`` y siempre revierte la sesión.
+
+    Los límites los pone la base: rol sin escritura, transacción READ ONLY y
+    timeouts. Acá sólo se acota cuánto resultado se devuelve a la API.
+    """
 
     if not isinstance(validated, ValidatedSQL):
         raise TypeError("execute_validated_sql requiere un objeto ValidatedSQL")
 
-    # No confiar sólo en el tipo: vuelve a validar si un llamador construyó la
-    # dataclass manualmente o si cambió la política entre generación y uso.
+    # No confiar sólo en el tipo: vuelve a validar por si un llamador construyó
+    # la dataclass a mano.
     checked = validate_sql(validated.sql)
 
     with psycopg.connect(**_connection_settings()) as connection:
@@ -68,31 +70,28 @@ def execute_validated_sql(validated: ValidatedSQL) -> QueryResult:
             connection.execute(
                 "SET LOCAL idle_in_transaction_session_timeout = '2000ms'"
             )
-            connection.execute("SET LOCAL search_path = pg_catalog")
+            connection.execute("SET LOCAL work_mem = '16MB'")
+            connection.execute("SET LOCAL search_path = public, pg_catalog")
 
             cursor = connection.execute(checked.sql)
             rows = cursor.fetchmany(MAX_RESULT_ROWS + 1)
-            if len(rows) > MAX_RESULT_ROWS:
-                raise ResultLimitExceeded(
-                    f"El resultado supera el máximo de {MAX_RESULT_ROWS} filas"
-                )
+            truncated = len(rows) > MAX_RESULT_ROWS
 
             byte_count = 0
             safe_rows: list[dict[str, Any]] = []
-            for row in rows:
+            for row in rows[:MAX_RESULT_ROWS]:
                 row_bytes = len(
                     json.dumps(row, default=str, ensure_ascii=False).encode("utf-8")
                 )
                 if byte_count + row_bytes > MAX_RESULT_BYTES:
-                    raise ResultLimitExceeded(
-                        f"El resultado supera el máximo de {MAX_RESULT_BYTES} bytes"
-                    )
+                    truncated = True
+                    break
                 byte_count += row_bytes
                 safe_rows.append(dict(row))
 
             columns = tuple(
                 description.name for description in (cursor.description or ())
             )
-            return QueryResult(columns, tuple(safe_rows), byte_count)
+            return QueryResult(columns, tuple(safe_rows), byte_count, truncated)
         finally:
             connection.execute("ROLLBACK")

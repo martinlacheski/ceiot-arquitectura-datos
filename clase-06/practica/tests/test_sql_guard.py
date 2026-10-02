@@ -1,3 +1,5 @@
+"""Open Text-to-SQL: the guard only blocks non-read statements; the database enforces the rest."""
+
 from __future__ import annotations
 
 import os
@@ -11,159 +13,65 @@ from shared.sql_guard import (  # type: ignore[import-not-found]
     safe_sql_preview,
     validate_sql,
 )
-from shared.sql_query import execute_validated_sql  # type: ignore[import-not-found]
+from shared.sql_query import (  # type: ignore[import-not-found]
+    MAX_RESULT_ROWS,
+    execute_validated_sql,
+)
 
-
-AVERAGE_QUERY = """
-SELECT AVG(value) AS average_co2
-FROM lab_read.measurements
-WHERE device_id = 'AIR-002'
-  AND variable = 'co2'
-  AND measured_at >= '2025-05-12T00:00:00Z'
-  AND measured_at < '2025-05-13T00:00:00Z'
-LIMIT 1
+# Needs a JOIN: public.measurements has no location_id, devices does.
+JOIN_AVERAGE_QUERY = """
+SELECT AVG(m.value) AS average_co2
+FROM measurements AS m
+JOIN devices AS d ON d.device_id = m.device_id
+WHERE d.location_id = 'LAB-101'
+  AND m.variable = 'co2'
+  AND m.measured_at >= '2025-05-12T00:00:00Z'
+  AND m.measured_at < '2025-05-13T00:00:00Z'
 """
 
 
-def test_accepts_and_executes_known_average_for_2025_05_12() -> None:
-    validated = validate_sql(AVERAGE_QUERY)
+@pytest.mark.parametrize(
+    "sql",
+    [
+        JOIN_AVERAGE_QUERY,
+        "WITH recent AS (SELECT * FROM measurements WHERE measured_at >= now() - INTERVAL '1 day') "
+        "SELECT variable, count(*) FROM recent GROUP BY variable",
+        "SELECT device_id FROM devices WHERE location_id IN (SELECT location_id FROM locations)",
+        "SELECT time_bucket('1 hour', measured_at) AS hour, round(avg(value), 2) "
+        "FROM measurements GROUP BY 1 ORDER BY 1",
+        "SELECT device_id, value, rank() OVER (ORDER BY value DESC) FROM measurements",
+        "SELECT a.device_id, ST_Distance(a.position, b.position) FROM devices a, devices b",
+        "SELECT 1 UNION SELECT 2",
+        "select * from measurements -- comentario",
+    ],
+)
+def test_accepts_any_single_read_only_query(sql: str) -> None:
+    validated = validate_sql(sql)
 
-    assert validated.view == "measurements"
-    assert validated.limit == 1
-
-    result = execute_validated_sql(validated)
-
-    assert result.columns == ("average_co2",)
-    assert len(result.rows) == 1
-    assert result.rows[0]["average_co2"] == pytest.approx(
-        Decimal("805.6666666666666667")
-    )
-    assert result.byte_count < 64 * 1024
+    assert validated.sql.strip()
 
 
 @pytest.mark.parametrize(
-    ("sql", "reason"),
+    "sql",
     [
-        (
-            "SELECT device_id FROM lab_read.devices LIMIT 1; "
-            "SELECT device_id FROM lab_read.devices LIMIT 1",
-            "exactamente una sentencia",
-        ),
-        (
-            "WITH removed AS (DELETE FROM public.measurements RETURNING *) "
-            "SELECT device_id FROM lab_read.measurements LIMIT 1",
-            "no se permiten CTE",
-        ),
-        (
-            "SELECT (SELECT pg_sleep(1)) "
-            "FROM lab_read.measurements LIMIT 1",
-            "subconsultas",
-        ),
-        (
-            "SELECT rolname FROM pg_catalog.pg_roles LIMIT 1",
-            "lab_read.measurements",
-        ),
-        (
-            "SELECT device_id FROM lab_read.measurements",
-            "se requiere LIMIT literal",
-        ),
-        (
-            "SELECT device_id FROM lab_read.measurements LIMIT 51",
-            "entre 1 y 50",
-        ),
+        "DELETE FROM measurements",
+        "INSERT INTO locations VALUES ('X', 'x', 'x', NULL)",
+        "UPDATE devices SET model = 'x'",
+        "DROP TABLE measurements",
+        "TRUNCATE measurements",
+        "CREATE TABLE x (id int)",
+        "ALTER TABLE devices ADD COLUMN x int",
+        "SET statement_timeout = 0",
+        "COPY measurements TO '/tmp/x'",
+        "SELECT 1; DELETE FROM measurements",
+        "WITH gone AS (DELETE FROM measurements RETURNING *) SELECT * FROM gone",
+        "SELECT * INTO copia FROM measurements",
+        "",
     ],
 )
-def test_rejects_adversarial_or_unbounded_sql(sql: str, reason: str) -> None:
-    with pytest.raises(SQLRejected, match=reason):
+def test_rejects_anything_that_is_not_a_single_read(sql: str) -> None:
+    with pytest.raises(SQLRejected):
         validate_sql(sql)
-
-
-RELATIVE_TIME_QUERY = """
-SELECT device_id
-FROM lab_read.measurements
-WHERE location_id = 'AULA-204'
-  AND variable = 'temperature'
-  AND measured_at >= now() - INTERVAL '24 hours'
-LIMIT 10
-"""
-
-
-def test_accepts_relative_time_predicate_and_locations_view() -> None:
-    validated = validate_sql(RELATIVE_TIME_QUERY)
-
-    assert validated.view == "measurements"
-    assert "CURRENT_TIMESTAMP" in validated.sql
-    assert "INTERVAL '24 HOURS'" in validated.sql
-
-    locations_query = (
-        "SELECT location_id, name, building FROM lab_read.locations LIMIT 5"
-    )
-    validated_locations = validate_sql(locations_query)
-    assert validated_locations.view == "locations"
-
-    result = execute_validated_sql(validated_locations)
-    assert result.columns == ("location_id", "name", "building")
-    assert len(result.rows) >= 1
-
-
-@pytest.mark.parametrize(
-    ("sql", "reason"),
-    [
-        (
-            "SELECT device_id FROM lab_read.measurements "
-            "WHERE measured_at >= now() - interval (SELECT '24 hours') LIMIT 1",
-            "subconsultas",
-        ),
-        (
-            "SELECT device_id FROM lab_read.measurements "
-            "WHERE measured_at >= now() - interval '24 hours' + pg_sleep(1) LIMIT 1",
-            "no está permitida",
-        ),
-        (
-            "SELECT device_id FROM lab_read.measurements "
-            "WHERE measured_at >= now() - make_interval(hours => 1) LIMIT 1",
-            "no está permitida",
-        ),
-        (
-            "SELECT device_id FROM lab_read.measurements "
-            "WHERE measured_at >= now() - (variable || ' hours')::interval LIMIT 1",
-            "no está permitida",
-        ),
-        (
-            "SELECT device_id FROM lab_read.measurements "
-            "WHERE measured_at >= now() - interval '24 weeks' LIMIT 1",
-            "hours, days o minutes",
-        ),
-        (
-            "SELECT device_id FROM lab_read.measurements "
-            "WHERE measured_at >= now() - interval '99999 hours' LIMIT 1",
-            "entero de hasta 3 dígitos",
-        ),
-        (
-            "SELECT now() FROM lab_read.devices LIMIT 1",
-            "now\\(\\) sólo se permite",
-        ),
-    ],
-)
-def test_rejects_hostile_relative_time_expressions(sql: str, reason: str) -> None:
-    with pytest.raises(SQLRejected, match=reason):
-        validate_sql(sql)
-
-
-def test_rejects_unknown_functions_comments_joins_and_unexposed_columns() -> None:
-    rejected = [
-        "SELECT set_config('search_path', 'public', false) "
-        "FROM lab_read.devices LIMIT 1",
-        "SELECT pg_advisory_lock(1) FROM lab_read.devices LIMIT 1",
-        "SELECT device_id FROM lab_read.devices -- comentario\nLIMIT 1",
-        "SELECT d.device_id FROM lab_read.devices AS d "
-        "JOIN lab_read.measurements AS m USING (device_id) LIMIT 1",
-        "SELECT position FROM lab_read.devices LIMIT 1",
-    ]
-
-    for sql in rejected:
-        with pytest.raises(SQLRejected):
-            validate_sql(sql)
 
 
 def test_rejected_sql_preview_is_single_line_escaped_and_bounded() -> None:
@@ -172,6 +80,22 @@ def test_rejected_sql_preview_is_single_line_escaped_and_bounded() -> None:
     assert "\\n" in preview
     assert "\n" not in preview
     assert len(preview) < 270
+
+
+def test_executes_a_join_over_the_real_tables_as_ai_readonly() -> None:
+    result = execute_validated_sql(validate_sql(JOIN_AVERAGE_QUERY))
+
+    assert result.columns == ("average_co2",)
+    assert result.rows[0]["average_co2"].quantize(Decimal("0.001")) == Decimal("805.667")
+
+
+def test_large_results_are_truncated_instead_of_failing() -> None:
+    result = execute_validated_sql(
+        validate_sql("SELECT generate_series(1, 500) AS n")
+    )
+
+    assert len(result.rows) == MAX_RESULT_ROWS
+    assert result.truncated is True
 
 
 def _readonly_connection() -> psycopg.Connection:
@@ -185,119 +109,43 @@ def _readonly_connection() -> psycopg.Connection:
     )
 
 
+def test_the_database_itself_blocks_writes_from_ai_readonly() -> None:
+    with _readonly_connection() as connection:
+        with pytest.raises(psycopg.Error):
+            connection.execute(
+                "INSERT INTO locations (location_id, name, building, position) "
+                "VALUES ('HACK', 'x', 'x', 'POINT(0 0)')"
+            )
+
+
 def test_readonly_roles_have_only_the_expected_privileges() -> None:
     with _readonly_connection() as connection:
-        assert connection.execute("SELECT current_user").fetchone() == (
-            "ai_readonly",
-        )
-        assert connection.execute(
-            "SHOW default_transaction_read_only"
-        ).fetchone() == ("on",)
-        assert connection.execute("SHOW search_path").fetchone() == ("pg_catalog",)
+        assert connection.execute("SELECT current_user").fetchone() == ("ai_readonly",)
+        assert connection.execute("SHOW default_transaction_read_only").fetchone() == ("on",)
+        assert connection.execute("SHOW search_path").fetchone() == ("public, pg_catalog",)
 
         observed = connection.execute(
             """
-            WITH relation_oids AS (
-                SELECT
-                    max(class.oid) FILTER (
-                        WHERE namespace.nspname = 'lab_read'
-                          AND class.relname = 'measurements'
-                    ) AS lab_measurements,
-                    max(class.oid) FILTER (
-                        WHERE namespace.nspname = 'lab_read'
-                          AND class.relname = 'devices'
-                    ) AS lab_devices,
-                    max(class.oid) FILTER (
-                        WHERE namespace.nspname = 'public'
-                          AND class.relname = 'manual_chunks'
-                    ) AS manual_chunks,
-                    max(class.oid) FILTER (
-                        WHERE namespace.nspname = 'public'
-                          AND class.relname = 'manual_documents'
-                    ) AS manual_documents,
-                    max(class.oid) FILTER (
-                        WHERE namespace.nspname = 'public'
-                          AND class.relname = 'measurements'
-                    ) AS measurements
-                FROM pg_catalog.pg_class AS class
-                JOIN pg_catalog.pg_namespace AS namespace
-                  ON namespace.oid = class.relnamespace
-            )
             SELECT
-                has_schema_privilege(
-                    'ai_readonly', 'public', 'USAGE'
-                ),
-                has_schema_privilege(
-                    'ai_readonly', 'public', 'CREATE'
-                ),
-                has_database_privilege(
-                    'ai_readonly', current_database(), 'TEMPORARY'
-                ),
-                has_schema_privilege(
-                    'ai_readonly', 'lab_read', 'USAGE'
-                ),
-                has_table_privilege(
-                    'ai_readonly', lab_measurements, 'SELECT'
-                ),
-                has_table_privilege(
-                    'ai_readonly', lab_devices, 'SELECT'
-                ),
-                has_table_privilege(
-                    'ai_readonly', manual_chunks, 'SELECT'
-                ),
-                has_table_privilege(
-                    'ai_readonly', manual_documents, 'SELECT'
-                ),
-                has_table_privilege(
-                    'ai_readonly', measurements, 'INSERT'
-                ),
-                has_schema_privilege(
-                    'rag_readonly', 'public', 'USAGE'
-                ),
-                has_schema_privilege(
-                    'rag_readonly', 'public', 'CREATE'
-                ),
-                has_database_privilege(
-                    'rag_readonly', current_database(), 'TEMPORARY'
-                ),
-                has_schema_privilege(
-                    'rag_readonly', 'lab_read', 'USAGE'
-                ),
-                has_table_privilege(
-                    'rag_readonly', lab_measurements, 'SELECT'
-                ),
-                has_table_privilege(
-                    'rag_readonly', lab_devices, 'SELECT'
-                ),
-                has_table_privilege(
-                    'rag_readonly', manual_chunks, 'SELECT'
-                ),
-                has_table_privilege(
-                    'rag_readonly', manual_documents, 'SELECT'
-                ),
-                has_table_privilege(
-                    'rag_readonly', measurements, 'INSERT'
-                )
-            FROM relation_oids
+                has_schema_privilege('ai_readonly', 'public', 'USAGE'),
+                has_schema_privilege('ai_readonly', 'public', 'CREATE'),
+                has_database_privilege('ai_readonly', current_database(), 'TEMPORARY'),
+                has_table_privilege('ai_readonly', 'public.measurements', 'SELECT'),
+                has_table_privilege('ai_readonly', 'public.devices', 'SELECT'),
+                has_table_privilege('ai_readonly', 'public.locations', 'SELECT'),
+                has_table_privilege('ai_readonly', 'public.manual_documents', 'SELECT'),
+                has_table_privilege('ai_readonly', 'public.measurements', 'INSERT'),
+                has_table_privilege('ai_readonly', 'public.devices', 'UPDATE'),
+                has_table_privilege('ai_readonly', 'public.locations', 'DELETE'),
+                has_schema_privilege('rag_readonly', 'public', 'USAGE'),
+                has_schema_privilege('rag_readonly', 'public', 'CREATE'),
+                has_table_privilege('rag_readonly', 'public.manual_chunks', 'SELECT'),
+                has_table_privilege('rag_readonly', 'public.measurements', 'SELECT')
             """
         ).fetchone()
         assert observed == (
-            False,
-            False,
-            False,
-            True,
-            True,
-            True,
-            False,
-            False,
-            False,
-            True,
-            False,
-            False,
-            False,
-            False,
-            False,
-            True,
-            True,
-            False,
+            True, False, False,
+            True, True, True, True,
+            False, False, False,
+            True, False, True, False,
         )

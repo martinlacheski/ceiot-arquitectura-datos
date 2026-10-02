@@ -169,6 +169,9 @@ SET title = EXCLUDED.title,
 
 COMMIT;
 
+-- Estadísticas frescas para que el esquema de Text-to-SQL vea los valores cargados.
+ANALYZE locations, devices, measurements, manual_documents;
+
 -- En un volumen fresco, antes de cargar otros PDF: 3 ubicaciones,
 -- 4 dispositivos, 1 registro de manual y 8 + 96 = 104 mediciones (8 fijas del
 -- 2025-05-12 más 48 horas de temperatura y 48 de humedad de ENV-X ancladas a

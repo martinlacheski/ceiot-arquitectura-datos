@@ -98,7 +98,7 @@ Todos los comandos parten del directorio de la práctica (`cd clase-06/practica`
    | Username | `ceiot` |
    | Password | `ceiot_local_only` (podés marcar **Save password**) |
 
-5. Guardá y abrí **Databases → ceiot_class6 → Schemas**: `public` tiene las tablas (`locations`, `devices`, `measurements`, `manual_documents`, `manual_chunks`) y `lab_read` las vistas de sólo lectura que usa Text-to-SQL.
+5. Guardá y abrí **Databases → ceiot_class6 → Schemas**: `public` tiene las tablas (`locations`, `devices`, `measurements`, `manual_documents`, `manual_chunks`) Son las mismas tablas que lee Text-to-SQL con el rol `ai_readonly` (sólo lectura). En **Properties → Comment** de cada tabla y columna está la documentación que el sistema le pasa al modelo.
 
 `postgres` es el nombre del servicio dentro de la red de Compose: desde pgAdmin **no** uses `localhost` ni `5436`. Si usás otro cliente desde tu máquina (DBeaver, `psql` local), ahí sí conectá a `127.0.0.1:5436`.
 
@@ -158,7 +158,7 @@ docker compose --env-file .env -f compose.yaml exec redis sh -c 'REDISCLI_AUTH="
 | 5 | bge-m3 | `loader.ingest_vectors` (paso 5) | 4 chunks de 1024 dimensiones |
 | 6 | pgvector | `loader.query_vectors` y `postgres/examples/04-vector.sql` | 3 vecinos por similitud; la paráfrasis con `ILIKE` devuelve 0 |
 | 7 | RAG | UI o `/api/query` con `"mode": "rag"` | Respuesta con página y sección del manual |
-| 8 | Text-to-SQL | UI o `/api/query` con `"mode": "text-to-sql"` | Un único `SELECT` validado sobre `lab_read.measurements` y sus filas |
+| 8 | Text-to-SQL | UI o `/api/query` con `"mode": "text-to-sql"` | El SQL generado (puede usar `JOIN`, `time_bucket`, PostGIS) y sus filas; el esquema que recibió el modelo en `/api/sql-schema` |
 | 9 | Integrado | UI o `/api/query` con `"mode": "integrated"` | Promedio de telemetría + procedimiento del manual |
 
 Los archivos SQL de los pasos 1, 2 y 6 se ejecutan desde pgAdmin o con `psql` dentro del contenedor, como se muestra en [Ejecutar los scripts](#ejecutar-los-scripts).
@@ -198,7 +198,21 @@ Esperás que el fragmento más cercano sea **página 1, sección "Recalibración
 
 Para Text-to-SQL e Integrado usá el mismo `curl`, cambiando `mode` y `question`. En modo integrado podés agregar `"document_id": "env-x-manual"`. La traza empieza con `orquestador`: una primera llamada separa la pregunta en una parte de telemetría (Text-to-SQL) y otra del manual (RAG), y ejecuta sólo lo necesario.
 
-Text-to-SQL corre con un rol de sólo lectura (`ai_readonly`) y un validador: acepta un único `SELECT` sobre las vistas `lab_read.*`, sin `JOIN`, subconsultas ni escrituras. Podés probarlo sin tocar datos preguntando por otra variable (`temperature`, `co2`) u otra ubicación (`LAB-101`).
+### Cómo funciona Text-to-SQL (modo abierto)
+
+1. **Descubre el esquema.** Antes de generar SQL, [`shared/sql_schema.py`](shared/sql_schema.py) consulta el catálogo de PostgreSQL con el mismo rol que ejecuta las consultas (`ai_readonly`): tablas, columnas y tipos (`pg_class`, `pg_attribute`), claves primarias y foráneas (`pg_constraint`), comentarios (`COMMENT ON`), extensiones (`pg_extension`) y los valores reales de las columnas de texto con pocos valores distintos (`SELECT DISTINCT`). En el código no hay ningún nombre de tabla escrito: si agregás una tabla y le das `GRANT SELECT` a `ai_readonly`, aparece sola. Mirá lo que recibe el modelo en [http://127.0.0.1:8006/api/sql-schema](http://127.0.0.1:8006/api/sql-schema).
+2. **Genera SQL sin reglas artificiales.** El modelo puede usar `JOIN`, subconsultas, CTE, funciones de ventana, `time_bucket` de TimescaleDB y `ST_Distance` de PostGIS.
+3. **La base pone los límites.** El SQL se ejecuta como `ai_readonly`: sólo tiene `SELECT` sobre las tablas de `public`, la transacción es `READ ONLY`, hay `statement_timeout` de 1,5 s y se devuelven como máximo 50 filas. El control previo ([`shared/sql_guard.py`](shared/sql_guard.py)) sólo rechaza lo que no es una única consulta de lectura (`INSERT`, `DELETE`, `DROP`, varias sentencias…).
+4. **Se corrige una vez.** Si la base rechaza la consulta (columna inexistente, timeout…), el error vuelve al modelo para que la corrija; la traza muestra `reintento-sql`.
+
+Los permisos y comentarios están en [`postgres/init/06-ai-open-access.sql`](postgres/init/06-ai-open-access.sql). En una base creada antes de este cambio aplicalo una vez:
+
+```bash
+docker compose --env-file .env -f compose.yaml up -d postgres
+docker compose --env-file .env -f compose.yaml exec postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f /docker-entrypoint-initdb.d/06-ai-open-access.sql'
+```
+
+Preguntas que antes no se podían responder: `¿Qué dispositivos hay en cada ubicación, con el nombre de la ubicación?` (JOIN), `¿Cuál fue la temperatura promedio del Aula 204 por franjas de 6 horas en el último día?` (`time_bucket`), `¿A qué distancia en metros está cada dispositivo del centro de su ubicación?` (PostGIS).
 
 ## Subir un PDF desde la UI
 
@@ -288,5 +302,5 @@ Son opcionales y se definen en `.env`; si faltan, rige el valor por defecto. Tra
 - [ ] El manual queda indexado en 4 chunks de 1024 dimensiones.
 - [ ] pgvector devuelve 3 vecinos donde `ILIKE` devuelve 0.
 - [ ] RAG cita la sección de recalibración y sin evidencia no llama a OpenRouter.
-- [ ] Text-to-SQL muestra un único `SELECT` validado y el modo integrado combina telemetría y manual.
+- [ ] `/api/sql-schema` muestra el esquema descubierto, Text-to-SQL responde una pregunta con `JOIN` y el modo integrado combina telemetría y manual.
 - [ ] Un PDF propio se sube con progreso y un datasheet en inglés responde a una pregunta en español.

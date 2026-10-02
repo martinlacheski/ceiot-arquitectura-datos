@@ -44,7 +44,8 @@ def test_catalog_inspection_and_query_filter_are_rendered_safely() -> None:
     assert "embedding_preview" in html
     assert "requestBody.document_id = selectedDocument" in html
     assert "queryMode !== 'text-to-sql'" in html
-    assert "lab_read" in html
+    assert "lab_read" not in html
+    assert "esquema real de la base" in html
     assert ".textContent" in html
     assert "document.createElement" in html
     assert "innerHTML" not in html
@@ -204,8 +205,8 @@ def test_each_query_mode_has_an_honest_contextual_explanation() -> None:
     assert "página, fragmento y distancia" in html
     assert "sólo si encuentra fragmentos" in html
     assert "OpenRouter genera una consulta SQL" in html
-    assert "guard de seguridad" in html
-    assert "vistas lab_read con un rol de sólo lectura" in html
+    assert "lee el esquema real de la base" in html
+    assert "con un rol de sólo lectura" in html
     assert "ignora los PDF, el documento elegido y la cantidad de fragmentos" in html
     assert "Primero ejecuta SQL protegido" in html
     assert "después busca con el modelo de embeddings local" in html

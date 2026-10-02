@@ -26,7 +26,11 @@ from shared.sql_query import (  # type: ignore[import-not-found]
     QueryResult,
     execute_validated_sql,
 )
-from shared.sql_schema import SchemaPrompt, schema_prompt  # type: ignore[import-not-found]
+from shared.sql_schema import (  # type: ignore[import-not-found]
+    SchemaPrompt,
+    SchemaUnavailable,
+    schema_prompt,
+)
 
 
 class ServiceUnavailable(RuntimeError):
@@ -74,9 +78,32 @@ def retrieve_manual(
 def _execute_sql_safely(validated: Any) -> QueryResult:
     try:
         return execute_validated_sql(validated)
-    except (psycopg.Error, TimeoutError, KeyError) as error:
+    except psycopg.Error as error:
+        sqlstate = getattr(error, "sqlstate", None)
+        # Con SQLSTATE (salvo la clase 08, conexión) es la base rechazando la
+        # consulta: columna inexistente, permiso denegado, timeout, escritura en
+        # una transacción de sólo lectura... Se muestra y se puede reintentar.
+        if sqlstate and not sqlstate.startswith("08"):
+            primary = getattr(error.diag, "message_primary", None) or str(error)
+            raise SQLRejected(
+                f"PostgreSQL rechazó la consulta ({primary.splitlines()[0]})",
+                validated.sql,
+            ) from error
         raise ServiceUnavailable(
             "La base de telemetría no está disponible temporalmente."
+        ) from error
+    except (TimeoutError, KeyError) as error:
+        raise ServiceUnavailable(
+            "La base de telemetría no está disponible temporalmente."
+        ) from error
+
+
+def _live_schema() -> SchemaPrompt:
+    try:
+        return schema_prompt()
+    except SchemaUnavailable as error:
+        raise ServiceUnavailable(
+            "No se pudo leer el esquema de la base temporalmente."
         ) from error
 
 
@@ -101,9 +128,10 @@ def _telemetry_sources(result: QueryResult) -> list[dict[str, Any]]:
     return [
         {
             "type": "telemetry",
-            "view": "lab_read",
+            "role": "ai_readonly",
             "columns": list(result.columns),
             "row_count": len(result.rows),
+            "truncated": result.truncated,
         }
     ]
 
@@ -116,24 +144,40 @@ def _context(chunks: list[dict[str, Any]]) -> str:
     )
 
 
+SQL_SYSTEM_PROMPT = (
+    "Traducí la pregunta a una única consulta SQL de PostgreSQL y respondé sólo "
+    "con el SQL, sin explicaciones ni markdown. Se ejecuta con un rol de sólo "
+    "lectura: usá SELECT o WITH ... SELECT. Podés usar JOIN, subconsultas, CTE, "
+    "funciones de agregación, de ventana y de fecha, y las funciones de las "
+    "extensiones instaladas (por ejemplo time_bucket de TimescaleDB o "
+    "ST_Distance de PostGIS). Usá las claves foráneas para unir tablas. Usá los "
+    "valores de texto exactamente como figuran en el esquema: las comparaciones "
+    "distinguen mayúsculas. Para períodos recientes usá now() - INTERVAL. Si la "
+    "consulta devuelve filas de detalle, limitá el resultado a 50 filas.\n\n"
+    "Esquema descubierto en la base:\n"
+)
+
+
 def _generate_sql(
-    question: str, client: OpenRouterClient, schema: SchemaPrompt
+    question: str,
+    client: OpenRouterClient,
+    schema: SchemaPrompt,
+    previous: tuple[str, str] | None = None,
 ) -> str:
-    raw = client.chat(
-        [
+    messages = [
+        {"role": "system", "content": SQL_SYSTEM_PROMPT + schema.text},
+        {"role": "user", "content": question},
+    ]
+    if previous is not None:
+        failed_sql, error = previous
+        messages += [
+            {"role": "assistant", "content": failed_sql},
             {
-                "role": "system",
-                "content": (
-                    "Generá exactamente un SELECT PostgreSQL pequeño y nada más. "
-                    "Debe consultar una sola vista lab_read, sin JOIN, CTE ni subconsultas, "
-                    "usar sólo AVG/COUNT/MIN/MAX/SUM si hace falta y terminar en LIMIT 1..50. "
-                    f"Esquema exacto:\n{schema.text}"
-                ),
+                "role": "user",
+                "content": f"Esa consulta falló: {error}. Corregila y devolvé sólo el SQL.",
             },
-            {"role": "user", "content": question},
-        ],
-        max_completion_tokens=180,
-    )
+        ]
+    raw = client.chat(messages, max_completion_tokens=300)
     if raw.startswith("```"):
         lines = raw.splitlines()
         if len(lines) >= 3 and lines[-1].strip() == "```":
@@ -185,6 +229,26 @@ def run_rag(
     }
 
 
+def _generate_and_run_sql(
+    question: str, chat: OpenRouterClient, trace: list[str]
+) -> tuple[Any, QueryResult]:
+    """Genera SQL, lo valida y ejecuta; si falla, reintenta una vez con el error."""
+
+    schema = _live_schema()
+    trace += [f"esquema-{schema.source}", "openrouter-sql"]
+    generated = _generate_sql(question, chat, schema)
+    try:
+        validated = validate_sql(generated)
+        result = _execute_sql_safely(validated)
+    except SQLRejected as error:
+        trace.append("reintento-sql")
+        generated = _generate_sql(question, chat, schema, previous=(generated, error.reason))
+        validated = validate_sql(generated)
+        result = _execute_sql_safely(validated)
+    trace += ["sqlglot-validado", "ai_readonly"]
+    return validated, result
+
+
 def _phrase_sql_answer(
     question: str, rows: list[dict[str, Any]], client: OpenRouterClient
 ) -> str:
@@ -216,15 +280,12 @@ def run_text_to_sql(
 ) -> dict[str, Any]:
     del top_k
     chat = client or OpenRouterClient()
-    schema = schema_prompt()
-    generated = _generate_sql(question, chat, schema)
-    validated = validate_sql(generated)
-    result = _execute_sql_safely(validated)
+    trace: list[str] = []
+    validated, result = _generate_and_run_sql(question, chat, trace)
     rows = list(result.rows)
     has_data = bool(rows) and any(
         value is not None for row in rows for value in row.values()
     )
-    trace = [f"esquema-{schema.source}", "openrouter-sql", "sqlglot-validado", "ai_readonly"]
     if has_data:
         answer = _phrase_sql_answer(question, rows, chat)
         trace.append("openrouter-respuesta")
@@ -314,11 +375,7 @@ def run_integrated(
     validated = None
     result = None
     if telemetry_question is not None:
-        schema = schema_prompt()
-        generated = _generate_sql(telemetry_question, chat, schema)
-        validated = validate_sql(generated)
-        result = _execute_sql_safely(validated)
-        trace += [f"esquema-{schema.source}", "openrouter-sql", "sqlglot-validado", "ai_readonly"]
+        validated, result = _generate_and_run_sql(telemetry_question, chat, trace)
 
     chunks: list[dict[str, Any]] = []
     if manual_question is not None:

@@ -11,13 +11,21 @@ from api import web_app, workflows  # type: ignore[import-not-found]
 from api.openrouter_client import OpenRouterClient  # type: ignore[import-not-found]
 from shared.sql_guard import SQLRejected  # type: ignore[import-not-found]
 from shared.sql_query import QueryResult  # type: ignore[import-not-found]
+from shared.sql_schema import SchemaPrompt  # type: ignore[import-not-found]
 
 VALID_SQL = (
-    "SELECT AVG(value) AS average_co2 FROM lab_read.measurements "
+    "SELECT AVG(value) AS average_co2 FROM measurements "
     "WHERE device_id = 'AIR-002' AND variable = 'co2' "
     "AND measured_at >= '2025-05-12T00:00:00Z' "
-    "AND measured_at < '2025-05-13T00:00:00Z' LIMIT 1"
+    "AND measured_at < '2025-05-13T00:00:00Z'"
 )
+FAKE_SCHEMA = SchemaPrompt("public.measurements\n  variable text\n  value numeric", "database")
+
+
+@pytest.fixture(autouse=True)
+def _fake_live_schema(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Workflow tests must not depend on the database: the live schema has its own tests.
+    monkeypatch.setattr(workflows, "schema_prompt", lambda: FAKE_SCHEMA)
 CHUNKS = [
     {
         "document_id": "env-x-manual",
@@ -167,23 +175,11 @@ def test_text_to_sql_validates_then_executes_with_ui_friendly_result(
     assert len(chat.calls) == 2
 
     system_prompt = chat.calls[0][0][0]["content"]
-    for exact_value in (
-        "co2",
-        "temperature",
-        "humidity",
-        "GOOD",
-        "AIR-002",
-        "AMB-001",
-        "location_id",
-        "AULA-204",
-        "variable = 'co2'",
-        "now() - INTERVAL",
-        "2025-05-12T00:00:00Z",
-        "2025-05-13T00:00:00Z",
-    ):
-        assert exact_value in system_prompt
-    assert "case-sensitive" in system_prompt
-    assert "nunca conviertas co2 a CO2" in system_prompt
+    assert FAKE_SCHEMA.text in system_prompt
+    assert "sólo lectura" in system_prompt
+    assert "JOIN" in system_prompt
+    assert "sin JOIN" not in system_prompt
+    assert "esquema-database" in response["trace"]
 
     answer_prompt = chat.calls[1][0][0]["content"]
     assert "evidencia no confiable" in answer_prompt
@@ -376,7 +372,7 @@ def test_integrated_malformed_plan_falls_back_to_running_both_branches(
 def test_generated_bad_sql_is_rejected_before_execution(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    chat = FakeChat("DELETE FROM measurements")
+    chat = FakeChat("DELETE FROM measurements", "DROP TABLE measurements")
     executed = False
 
     def must_not_execute(_: Any) -> QueryResult:
@@ -385,9 +381,47 @@ def test_generated_bad_sql_is_rejected_before_execution(
         return RESULT
 
     monkeypatch.setattr(workflows, "execute_validated_sql", must_not_execute)
-    with pytest.raises(SQLRejected, match="SELECT"):
+    with pytest.raises(SQLRejected, match="lectura"):
         workflows.run_text_to_sql("Borrá todo", 2, client=chat)  # type: ignore[arg-type]
     assert executed is False
+    assert len(chat.calls) == 2
+
+
+def test_failed_sql_is_retried_once_with_the_database_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    chat = FakeChat("SELECT nope FROM measurements", VALID_SQL, "El promedio fue 805,67 ppm.")
+    attempts: list[str] = []
+
+    def execute(validated: Any) -> QueryResult:
+        attempts.append(validated.sql)
+        if len(attempts) == 1:
+            raise psycopg.errors.UndefinedColumn('column "nope" does not exist')
+        return RESULT
+
+    monkeypatch.setattr(workflows, "execute_validated_sql", execute)
+
+    response = workflows.run_text_to_sql("Promedio de CO2", 2, client=chat)  # type: ignore[arg-type]
+
+    assert len(attempts) == 2
+    assert "reintento-sql" in response["trace"]
+    retry_messages = chat.calls[1][0]
+    assert any('column "nope" does not exist' in message["content"] for message in retry_messages)
+    assert response["rows"] == [{"average_co2": 805.67}]
+
+
+def test_sql_failing_twice_is_reported_as_a_visible_rejection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    chat = FakeChat("SELECT nope FROM measurements", "SELECT nope2 FROM measurements")
+
+    def execute(_validated: Any) -> QueryResult:
+        raise psycopg.errors.UndefinedColumn('column "nope" does not exist')
+
+    monkeypatch.setattr(workflows, "execute_validated_sql", execute)
+
+    with pytest.raises(SQLRejected, match="does not exist"):
+        workflows.run_text_to_sql("Promedio de CO2", 2, client=chat)  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize("mode", ["rag", "text-to-sql", "integrated"])
@@ -485,8 +519,8 @@ def test_root_serves_accessible_static_ui_with_safe_dom_rendering() -> None:
     assert "example.addEventListener('click'" in html
     assert "question.focus()" in html
     assert "Escribí tu propia pregunta" in html
-    assert "vistas <code>lab_read</code>" in html
-    assert "SQL generado pasa por el guard" in html
+    assert "rol de sólo lectura" in html
+    assert "lab_read" not in html
     assert "¿Cómo debe recalibrarse el sensor ENV-X" in html
     assert "¿Cuál fue la temperatura promedio del Aula 204" in html
     assert "El sensor ENV-X del Aula 204 presenta mediciones anómalas" in html

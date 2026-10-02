@@ -96,12 +96,12 @@
           <option value="">Todos los documentos</option>
         </select>
       </label>
-      <p id="document-filter-help" class="note">RAG e Integrado pueden limitar la recuperación al documento elegido. Text-to-SQL ignora y deshabilita esta selección porque consulta las vistas <code>lab_read</code>, no los PDF.</p>
+      <p id="document-filter-help" class="note">RAG e Integrado pueden limitar la recuperación al documento elegido. Text-to-SQL ignora y deshabilita esta selección porque consulta las tablas de telemetría, no los PDF.</p>
       <label for="question">Escribí tu propia pregunta
         <textarea id="question" name="question" required minlength="3" maxlength="500"
           aria-describedby="question-help"></textarea>
       </label>
-      <p id="question-help" class="note">La redacción es libre, pero las respuestas se basan en el manual inicial, los PDF que cargues y las vistas <code>lab_read</code>. Una pregunta ajena al dominio puede no encontrar evidencia, y todo SQL generado pasa por el guard de seguridad.</p>
+      <p id="question-help" class="note">La redacción es libre, pero las respuestas se basan en el manual inicial, los PDF que cargues y el esquema real de la base. Una pregunta ajena al dominio puede no encontrar evidencia, y todo SQL generado se ejecuta con un rol de sólo lectura.</p>
       <details>
         <summary>Ejemplos opcionales</summary>
         <div class="examples">
@@ -150,7 +150,7 @@
   const MANUAL_SEED_DOCUMENT_ID = "env-x-manual";
   const MODE_GUIDES = {
     rag: 'Busca con el modelo de embeddings local (BAAI/bge-m3) en el manual o PDF seleccionado (o en todos) y muestra la fuente con página, fragmento y distancia. OpenRouter sintetiza la respuesta sólo si encuentra fragmentos.',
-    'text-to-sql': 'OpenRouter genera una consulta SQL; el guard de seguridad la valida y la ejecuta sobre las vistas lab_read con un rol de sólo lectura. Muestra el SQL validado y las filas. Este modo ignora los PDF, el documento elegido y la cantidad de fragmentos.',
+    'text-to-sql': 'OpenRouter genera una consulta SQL: el sistema lee el esquema real de la base (tablas, claves y valores) y se lo pasa al modelo, que puede usar JOIN, subconsultas, TimescaleDB y PostGIS. La consulta se ejecuta con un rol de sólo lectura; si la base la rechaza, el modelo la corrige una vez. Muestra el SQL y las filas. Este modo ignora los PDF, el documento elegido y la cantidad de fragmentos.',
     integrated: 'Primero ejecuta SQL protegido de sólo lectura sobre la telemetría; después busca con el modelo de embeddings local en el documento seleccionado o en todos. Si encuentra fragmentos, OpenRouter sintetiza ambas evidencias y puede ser una segunda llamada al proveedor. Muestra SQL, filas y cada fuente documental con página, fragmento y distancia; sin evidencia de PDF no atribuye respaldo al documento.'
   };
   const MODE_COST_NOTE = ' Cambiar esta selección no envía ninguna consulta. Sólo Consultar puede contactar a OpenRouter y generar costo.';
@@ -546,7 +546,7 @@
         addTextElement(article, 'p', source.content, 'excerpt');
       } else {
         addTextElement(article, 'strong', 'Fuente de telemetría');
-        addTextElement(article, 'p', `Vista: ${source.view} · filas: ${source.row_count} · columnas: ${(source.columns || []).join(', ')}`);
+        addTextElement(article, 'p', `Rol: ${source.role} · filas: ${source.row_count}${source.truncated ? ' (recortado a 50)' : ''} · columnas: ${(source.columns || []).join(', ')}`);
       }
       target.appendChild(article);
     });
