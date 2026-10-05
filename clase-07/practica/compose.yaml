@@ -3,6 +3,20 @@ name: ceiot-clase-07
 services:
   postgres:
     image: timescale/timescaledb-ha:pg17.11-ts2.30.1
+    # El postgresql.conf vive en el volumen de datos (se escribe una sola vez al
+    # inicializar), así que no se edita: los parámetros se pasan por línea de
+    # comandos, que tiene prioridad y funciona también con un volumen ya creado.
+    # shared_preload_libraries repite las dos bibliotecas que trae la imagen y
+    # suma pg_stat_statements (monitoreo, 05-monitoreo.sql). Cambiarlo exige
+    # reiniciar el contenedor.
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=timescaledb,pg_textsearch,pg_stat_statements
+      - -c
+      - pg_stat_statements.track=all
+      - -c
+      - track_io_timing=on
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-ceiot}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ceiot_local_only}
@@ -11,6 +25,10 @@ services:
       - "127.0.0.1:${POSTGRES_PORT:-5437}:5432"
     volumes:
       - postgres_data:/home/postgres/pgdata/data
+      # Volumen propio para los respaldos (04-backup-restore.sh): sobrevive a
+      # `down` y no mezcla los dumps con los datos. La imagen ya trae esa ruta
+      # con dueño postgres, y Docker copia el dueño al volumen vacío.
+      - postgres_backups:/home/postgres/pgdata/backup
       - ./postgres/init/01-extensions.sql:/docker-entrypoint-initdb.d/01-extensions.sql:ro
       - ./postgres/init/02-schema.sql:/docker-entrypoint-initdb.d/02-schema.sql:ro
       - ./postgres/init/03-vector.sql:/docker-entrypoint-initdb.d/03-vector.sql:ro
@@ -18,6 +36,7 @@ services:
       - ./postgres/init/05-document-upload.sql:/docker-entrypoint-initdb.d/05-document-upload.sql:ro
       - ./postgres/init/06-ai-open-access.sql:/docker-entrypoint-initdb.d/06-ai-open-access.sql:ro
       - ./postgres/init/07-tenant-rls.sql:/docker-entrypoint-initdb.d/07-tenant-rls.sql:ro
+      - ./postgres/init/08-monitoring.sql:/docker-entrypoint-initdb.d/08-monitoring.sql:ro
       # Scripts accesibles desde el contenedor: psql -f /lab/seed/... o /lab/examples/...
       - ./postgres/seed:/lab/seed:ro
       - ./postgres/examples:/lab/examples:ro
@@ -305,6 +324,7 @@ services:
 
 volumes:
   postgres_data:
+  postgres_backups:
   redis_data:
   seaweedfs_data:
   embedding_model_cache:
