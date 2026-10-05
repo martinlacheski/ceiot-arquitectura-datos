@@ -9,6 +9,9 @@ services:
     # shared_preload_libraries repite las dos bibliotecas que trae la imagen y
     # suma pg_stat_statements (monitoreo, 05-monitoreo.sql). Cambiarlo exige
     # reiniciar el contenedor.
+    # hba_file: usa el pg_hba.conf del repositorio (con la regla de replicación)
+    # en vez del que está en el volumen. max_slot_wal_keep_size acota el WAL que
+    # un slot de réplica caída puede retener, para que no llene el disco.
     command:
       - postgres
       - -c
@@ -17,6 +20,10 @@ services:
       - pg_stat_statements.track=all
       - -c
       - track_io_timing=on
+      - -c
+      - hba_file=/lab/pg_hba.conf
+      - -c
+      - max_slot_wal_keep_size=1GB
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-ceiot}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ceiot_local_only}
@@ -37,6 +44,8 @@ services:
       - ./postgres/init/06-ai-open-access.sql:/docker-entrypoint-initdb.d/06-ai-open-access.sql:ro
       - ./postgres/init/07-tenant-rls.sql:/docker-entrypoint-initdb.d/07-tenant-rls.sql:ro
       - ./postgres/init/08-monitoring.sql:/docker-entrypoint-initdb.d/08-monitoring.sql:ro
+      - ./postgres/init/09-replication.sql:/docker-entrypoint-initdb.d/09-replication.sql:ro
+      - ./postgres/pg_hba.conf:/lab/pg_hba.conf:ro
       # Scripts accesibles desde el contenedor: psql -f /lab/seed/... o /lab/examples/...
       - ./postgres/seed:/lab/seed:ro
       - ./postgres/examples:/lab/examples:ro
@@ -53,6 +62,77 @@ services:
       timeout: 5s
       retries: 20
       start_period: 20s
+    # Escalabilidad vertical (slides 65-66, 08-escalabilidad.sh): el tope de
+    # CPU y memoria del contenedor se cambia en .env y se aplica con
+    # `docker compose up -d postgres` (recrea el contenedor; los datos quedan).
+    mem_limit: ${POSTGRES_MEM_LIMIT:-4g}
+    cpus: "${POSTGRES_CPUS:-2}"
+    restart: unless-stopped
+
+  # Réplica de streaming (slides 56-58). Es opcional: no arranca con el stack
+  # normal; se pide con `docker compose --profile replica up -d --wait`.
+  postgres-replica:
+    image: timescale/timescaledb-ha:pg17.11-ts2.30.1
+    profiles:
+      - replica
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-ceiot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ceiot_local_only}
+      POSTGRES_DB: ${POSTGRES_DB:-ceiot_class7}
+      # Credencial fija sólo para esta demo local (rol creado en 09-replication.sql).
+      REPLICATION_PASSWORD: ceiot_replicator_local_only
+    # El entrypoint clona al primario la primera vez (volumen sin PG_VERSION) y
+    # después arranca postgres. pg_basebackup -R deja standby.signal y
+    # primary_conninfo; -C -S replica_1 crea un slot físico: el primario
+    # conserva el WAL que la réplica todavía no leyó (sirve tras un `pause`).
+    # Si el volumen de la réplica se borró pero el primario conserva el slot
+    # huérfano, se lo elimina antes (re-ejecutable). shared_preload_libraries
+    # debe coincidir con el del primario: TimescaleDB lo exige.
+    entrypoint:
+      - sh
+      - -c
+      - |
+        set -eu
+        if [ ! -s "$$PGDATA/PG_VERSION" ]; then
+          PGPASSWORD="$$POSTGRES_PASSWORD" psql -h postgres -U "$$POSTGRES_USER" -d postgres -qAtc \
+            "SELECT pg_drop_replication_slot(slot_name) FROM pg_replication_slots WHERE slot_name = 'replica_1' AND NOT active"
+          PGPASSWORD="$$REPLICATION_PASSWORD" pg_basebackup -h postgres -U replicator \
+            -D "$$PGDATA" -Fp -Xs -P -R -C -S replica_1
+          chmod 700 "$$PGDATA"
+        fi
+        exec postgres "$$@"
+      - replica-entrypoint
+    command:
+      - -c
+      - hot_standby=on
+      - -c
+      - shared_preload_libraries=timescaledb,pg_textsearch,pg_stat_statements
+      - -c
+      - pg_stat_statements.track=all
+      - -c
+      - track_io_timing=on
+    ports:
+      - "127.0.0.1:${POSTGRES_REPLICA_PORT:-5438}:5432"
+    volumes:
+      - postgres_replica_data:/home/postgres/pgdata/data
+      - ./postgres/examples:/lab/examples:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}" &&
+          psql -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}" -tAc
+          "SELECT pg_is_in_recovery()" | grep -qx t
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+    # Mismo tope que el primario, para que la comparación de lecturas sea justa.
+    mem_limit: ${POSTGRES_MEM_LIMIT:-4g}
+    cpus: "${POSTGRES_CPUS:-2}"
     restart: unless-stopped
 
   redis:
@@ -123,6 +203,7 @@ services:
       - ./Dockerfile:/app/Dockerfile:ro
       - ./postgres/init:/app/postgres/init:ro
       - ./postgres/seed:/app/postgres/seed:ro
+      - ./postgres/pg_hba.conf:/app/postgres/pg_hba.conf:ro
       - ./compose.yaml:/app/compose.yaml:ro
       - ./.env.example:/app/.env.example:ro
       - ./tests:/app/tests:ro
@@ -325,6 +406,7 @@ services:
 volumes:
   postgres_data:
   postgres_backups:
+  postgres_replica_data:
   redis_data:
   seaweedfs_data:
   embedding_model_cache:
