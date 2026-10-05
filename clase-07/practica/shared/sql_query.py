@@ -48,8 +48,18 @@ def _connection_settings() -> dict[str, object]:
     }
 
 
-def execute_validated_sql(validated: ValidatedSQL) -> QueryResult:
+def _checked_tenant_id(tenant_id: object) -> int:
+    # bool es subclase de int: True no puede colarse como organización 1.
+    if isinstance(tenant_id, bool) or not isinstance(tenant_id, int) or tenant_id < 1:
+        raise ValueError("tenant_id debe ser un entero positivo")
+    return tenant_id
+
+
+def execute_validated_sql(validated: ValidatedSQL, tenant_id: int) -> QueryResult:
     """Ejecuta SQL de lectura como ``ai_readonly`` y siempre revierte la sesión.
+
+    Antes del SQL generado se fija ``app.tenant_id`` (sólo para esta
+    transacción): las políticas RLS de la base filtran las filas con ese valor.
 
     Los límites los pone la base: rol sin escritura, transacción READ ONLY y
     timeouts. Acá sólo se acota cuánto resultado se devuelve a la API.
@@ -61,6 +71,7 @@ def execute_validated_sql(validated: ValidatedSQL) -> QueryResult:
     # No confiar sólo en el tipo: vuelve a validar por si un llamador construyó
     # la dataclass a mano.
     checked = validate_sql(validated.sql)
+    tenant = _checked_tenant_id(tenant_id)
 
     with psycopg.connect(**_connection_settings()) as connection:
         connection.execute("BEGIN READ ONLY")
@@ -72,6 +83,12 @@ def execute_validated_sql(validated: ValidatedSQL) -> QueryResult:
             )
             connection.execute("SET LOCAL work_mem = '16MB'")
             connection.execute("SET LOCAL search_path = public, pg_catalog")
+
+            # El tenant va como parámetro y con is_local=true: vale sólo hasta el
+            # ROLLBACK y no se filtra a la siguiente consulta de la conexión.
+            connection.execute(
+                "SELECT set_config('app.tenant_id', %s, true)", (str(tenant),)
+            )
 
             cursor = connection.execute(checked.sql)
             rows = cursor.fetchmany(MAX_RESULT_ROWS + 1)

@@ -50,17 +50,17 @@ def test_schema_is_cached_for_a_while_and_then_reloaded(monkeypatch: pytest.Monk
     calls: list[int] = []
     now = [1000.0]
 
-    def fake_load() -> Any:
+    def fake_load(_tenant_id: int) -> Any:
         calls.append(1)
         return SNAPSHOT
 
     monkeypatch.setattr(sql_schema, "_load_from_database", fake_load)
     monkeypatch.setattr(sql_schema.time, "monotonic", lambda: now[0])
 
-    first = sql_schema.schema_prompt()
-    second = sql_schema.schema_prompt()
+    first = sql_schema.schema_prompt(1)
+    second = sql_schema.schema_prompt(1)
     now[0] += sql_schema.CACHE_SECONDS + 1
-    sql_schema.schema_prompt()
+    sql_schema.schema_prompt(1)
 
     assert first.source == "database"
     assert second == first
@@ -70,17 +70,17 @@ def test_schema_is_cached_for_a_while_and_then_reloaded(monkeypatch: pytest.Monk
 def test_unreachable_database_is_reported_not_replaced_by_a_fixed_schema(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def failing_load() -> Any:
+    def failing_load(_tenant_id: int) -> Any:
         raise psycopg.OperationalError("down")
 
     monkeypatch.setattr(sql_schema, "_load_from_database", failing_load)
 
     with pytest.raises(sql_schema.SchemaUnavailable):
-        sql_schema.schema_prompt()
+        sql_schema.schema_prompt(1)
 
 
 def test_live_schema_describes_what_ai_readonly_can_read() -> None:
-    text = sql_schema.schema_prompt().text
+    text = sql_schema.schema_prompt(1).text
 
     for expected in (
         "public.measurements",
@@ -102,9 +102,9 @@ def test_schema_endpoint_shows_what_the_model_receives(monkeypatch: pytest.Monke
 
     from api import web_app  # type: ignore[import-not-found]
 
-    monkeypatch.setattr(sql_schema, "_load_from_database", lambda: SNAPSHOT)
+    monkeypatch.setattr(sql_schema, "_load_from_database", lambda _tenant_id: SNAPSHOT)
 
-    response = TestClient(web_app.app).get("/api/sql-schema")
+    response = TestClient(web_app.app).get("/api/sql-schema", params={"user_id": "ana"})
 
     assert response.status_code == 200
     assert response.json()["source"] == "database"

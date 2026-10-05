@@ -12,6 +12,11 @@ leer:
 - ``SELECT DISTINCT`` armado dinámicamente: valores reales de las columnas de
   texto con pocos valores distintos, para que el modelo no invente literales.
 
+Con RLS, el catálogo (tablas, columnas) es igual para todos, pero los valores
+de ejemplo salen de ``SELECT DISTINCT`` sobre las tablas: se leen con el
+contexto del tenant que consulta, para que no vea nombres de otra organización
+en el prompt. Por eso el caché es por tenant.
+
 Si se agrega una tabla y se le da ``GRANT SELECT`` al rol, aparece sola.
 """
 
@@ -24,7 +29,10 @@ from typing import Any
 import psycopg  # type: ignore[import-not-found]
 from psycopg import sql  # type: ignore[import-not-found]
 
-from shared.sql_query import _connection_settings  # type: ignore[import-not-found]
+from shared.sql_query import (  # type: ignore[import-not-found]
+    _checked_tenant_id,
+    _connection_settings,
+)
 
 CACHE_SECONDS = 300
 MAX_DISTINCT_VALUES = 20
@@ -106,12 +114,11 @@ class SchemaPrompt:
     source: str  # "database": siempre se lee de la base
 
 
-_cache: tuple[float, SchemaPrompt] | None = None
+_cache: dict[int, tuple[float, SchemaPrompt]] = {}
 
 
 def clear_cache() -> None:
-    global _cache
-    _cache = None
+    _cache.clear()
 
 
 def _with_comment(text: str, comment: str | None) -> str:
@@ -181,13 +188,16 @@ def _distinct_values(
     return values
 
 
-def _load_from_database() -> SchemaSnapshot:
+def _load_from_database(tenant_id: int) -> SchemaSnapshot:
     settings = {**_connection_settings(), "autocommit": False}
     with psycopg.connect(**settings) as connection:
         try:
             connection.execute("SET TRANSACTION READ ONLY")
             connection.execute("SET LOCAL statement_timeout = '500ms'")
             connection.execute("SET LOCAL search_path = public, pg_catalog")
+            connection.execute(
+                "SELECT set_config('app.tenant_id', %s, true)", (str(tenant_id),)
+            )
             extensions = connection.execute(EXTENSIONS_QUERY).fetchall()
             columns = [dict(row) for row in connection.execute(COLUMNS_QUERY).fetchall()]
             constraints = connection.execute(CONSTRAINTS_QUERY).fetchall()
@@ -202,17 +212,18 @@ def _load_from_database() -> SchemaSnapshot:
     )
 
 
-def schema_prompt() -> SchemaPrompt:
-    """Devuelve el esquema descubierto, cacheado unos minutos."""
+def schema_prompt(tenant_id: int) -> SchemaPrompt:
+    """Devuelve el esquema descubierto para un tenant, cacheado unos minutos."""
 
-    global _cache
+    tenant_id = _checked_tenant_id(tenant_id)
     now = time.monotonic()
-    if _cache is not None and now - _cache[0] < CACHE_SECONDS:
-        return _cache[1]
+    cached = _cache.get(tenant_id)
+    if cached is not None and now - cached[0] < CACHE_SECONDS:
+        return cached[1]
     try:
-        snapshot = _load_from_database()
+        snapshot = _load_from_database(tenant_id)
     except (psycopg.Error, KeyError, RuntimeError, TimeoutError) as error:
         raise SchemaUnavailable("No se pudo leer el esquema de la base.") from error
     prompt = SchemaPrompt(format_schema(snapshot), "database")
-    _cache = (now, prompt)
+    _cache[tenant_id] = (now, prompt)
     return prompt

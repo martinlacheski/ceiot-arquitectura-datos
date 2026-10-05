@@ -31,6 +31,7 @@ from shared.sql_schema import (  # type: ignore[import-not-found]
     SchemaUnavailable,
     schema_prompt,
 )
+from shared.tenants import Tenant  # type: ignore[import-not-found]
 
 
 class ServiceUnavailable(RuntimeError):
@@ -75,9 +76,9 @@ def retrieve_manual(
     return [dict(row) for row in rows]
 
 
-def _execute_sql_safely(validated: Any) -> QueryResult:
+def _execute_sql_safely(validated: Any, tenant: Tenant) -> QueryResult:
     try:
-        return execute_validated_sql(validated)
+        return execute_validated_sql(validated, tenant.organization_id)
     except psycopg.Error as error:
         sqlstate = getattr(error, "sqlstate", None)
         # Con SQLSTATE (salvo la clase 08, conexión) es la base rechazando la
@@ -98,9 +99,9 @@ def _execute_sql_safely(validated: Any) -> QueryResult:
         ) from error
 
 
-def _live_schema() -> SchemaPrompt:
+def _live_schema(tenant: Tenant) -> SchemaPrompt:
     try:
-        return schema_prompt()
+        return schema_prompt(tenant.organization_id)
     except SchemaUnavailable as error:
         raise ServiceUnavailable(
             "No se pudo leer el esquema de la base temporalmente."
@@ -153,7 +154,10 @@ SQL_SYSTEM_PROMPT = (
     "ST_Distance de PostGIS). Usá las claves foráneas para unir tablas. Usá los "
     "valores de texto exactamente como figuran en el esquema: las comparaciones "
     "distinguen mayúsculas. Para períodos recientes usá now() - INTERVAL. Si la "
-    "consulta devuelve filas de detalle, limitá el resultado a 50 filas.\n\n"
+    "consulta devuelve filas de detalle, limitá el resultado a 50 filas. La base "
+    "ya restringe las filas a la organización del usuario (columna "
+    "organization_id): no filtres por organización ni intentes cambiar ese "
+    "contexto; consultá como si los datos visibles fueran todos los que existen.\n\n"
     "Esquema descubierto en la base:\n"
 )
 
@@ -190,8 +194,12 @@ def run_rag(
     top_k: int,
     *,
     document_id: str | None = None,
+    tenant: Tenant | None = None,
     client: OpenRouterClient | None = None,
 ) -> dict[str, Any]:
+    # El aislamiento de documentos por organización llega con la tarea C07-5;
+    # por ahora el RAG no usa el tenant.
+    del tenant
     if document_id is None:
         chunks = retrieve_manual(question, top_k)
     else:
@@ -230,22 +238,22 @@ def run_rag(
 
 
 def _generate_and_run_sql(
-    question: str, chat: OpenRouterClient, trace: list[str]
+    question: str, chat: OpenRouterClient, trace: list[str], tenant: Tenant
 ) -> tuple[Any, QueryResult]:
     """Genera SQL, lo valida y ejecuta; si falla, reintenta una vez con el error."""
 
-    schema = _live_schema()
+    schema = _live_schema(tenant)
     trace += [f"esquema-{schema.source}", "openrouter-sql"]
     generated = _generate_sql(question, chat, schema)
     try:
         validated = validate_sql(generated)
-        result = _execute_sql_safely(validated)
+        result = _execute_sql_safely(validated, tenant)
     except SQLRejected as error:
         trace.append("reintento-sql")
         generated = _generate_sql(question, chat, schema, previous=(generated, error.reason))
         validated = validate_sql(generated)
-        result = _execute_sql_safely(validated)
-    trace += ["sqlglot-validado", "ai_readonly"]
+        result = _execute_sql_safely(validated, tenant)
+    trace += ["sqlglot-validado", f"tenant={tenant.organization_id}", "rol=ai_readonly"]
     return validated, result
 
 
@@ -276,12 +284,16 @@ def _phrase_sql_answer(
 
 
 def run_text_to_sql(
-    question: str, top_k: int, *, client: OpenRouterClient | None = None
+    question: str,
+    top_k: int,
+    *,
+    tenant: Tenant,
+    client: OpenRouterClient | None = None,
 ) -> dict[str, Any]:
     del top_k
     chat = client or OpenRouterClient()
     trace: list[str] = []
-    validated, result = _generate_and_run_sql(question, chat, trace)
+    validated, result = _generate_and_run_sql(question, chat, trace, tenant)
     rows = list(result.rows)
     has_data = bool(rows) and any(
         value is not None for row in rows for value in row.values()
@@ -352,6 +364,7 @@ def run_integrated(
     top_k: int,
     *,
     document_id: str | None = None,
+    tenant: Tenant,
     client: OpenRouterClient | None = None,
 ) -> dict[str, Any]:
     chat = client or OpenRouterClient()
@@ -375,7 +388,9 @@ def run_integrated(
     validated = None
     result = None
     if telemetry_question is not None:
-        validated, result = _generate_and_run_sql(telemetry_question, chat, trace)
+        validated, result = _generate_and_run_sql(
+            telemetry_question, chat, trace, tenant
+        )
 
     chunks: list[dict[str, Any]] = []
     if manual_question is not None:

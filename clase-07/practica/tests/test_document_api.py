@@ -17,6 +17,9 @@ from api.web_app import upload_document  # type: ignore[import-not-found]
 from loader.pdf_document import MAX_PDF_BYTES  # type: ignore[import-not-found]
 from shared import document_catalog  # type: ignore[import-not-found]
 from shared.document_catalog import CatalogUnavailable  # type: ignore[import-not-found]
+from shared.tenants import resolve_user  # type: ignore[import-not-found]
+
+ANA = resolve_user("ana")
 
 _HTTPX_ASYNC_CLIENT = httpx.AsyncClient
 PDF_BYTES = b"%PDF bounded public proxy"
@@ -125,7 +128,7 @@ def test_query_filter_is_keyword_only_for_rag_and_integrated_and_legacy_is_uncha
 
     assert client.post(
         "/api/query",
-        json={"question": "Pregunta válida", "mode": "rag", "document_id": DOCUMENT_ID},
+        json={"question": "Pregunta válida", "mode": "rag", "document_id": DOCUMENT_ID, "user_id": "ana"},
     ).status_code == 200
     assert client.post(
         "/api/query",
@@ -133,16 +136,17 @@ def test_query_filter_is_keyword_only_for_rag_and_integrated_and_legacy_is_uncha
             "question": "Pregunta válida",
             "mode": "integrated",
             "document_id": DOCUMENT_ID,
+            "user_id": "ana",
         },
     ).status_code == 200
     assert client.post(
-        "/api/query", json={"question": "Pregunta válida", "mode": "integrated"}
+        "/api/query", json={"question": "Pregunta válida", "mode": "integrated", "user_id": "ana"}
     ).status_code == 200
 
     assert calls == [
-        (("Pregunta válida", 4), {"document_id": DOCUMENT_ID}),
-        (("Pregunta válida", 4), {"document_id": DOCUMENT_ID}),
-        (("Pregunta válida", 4), {}),
+        (("Pregunta válida", 4), {"document_id": DOCUMENT_ID, "tenant": ANA}),
+        (("Pregunta válida", 4), {"document_id": DOCUMENT_ID, "tenant": ANA}),
+        (("Pregunta válida", 4), {"tenant": ANA}),
     ]
 
 
@@ -162,11 +166,12 @@ def test_text_to_sql_rejects_document_filter_before_openrouter_and_bad_id_is_422
             "question": "Promedio de CO2",
             "mode": "text-to-sql",
             "document_id": DOCUMENT_ID,
+            "user_id": "ana",
         },
     )
     invalid = client.post(
         "/api/query",
-        json={"question": "Pregunta válida", "mode": "rag", "document_id": "bad"},
+        json={"question": "Pregunta válida", "mode": "rag", "document_id": "bad", "user_id": "ana"},
     )
 
     assert filtered.status_code == 422

@@ -42,6 +42,15 @@
     <p>Explorá el manual, los PDF que cargues, la telemetría validada o ambas fuentes.</p>
   </header>
 
+  <section class="panel" aria-labelledby="user-title">
+    <h2 id="user-title">Usuario simulado</h2>
+    <label for="user-id">Consultar como
+      <select id="user-id" name="user_id" aria-describedby="user-help"></select>
+    </label>
+    <p id="user-help" class="note">No hay login real: cada usuario pertenece a una organización y la base sólo le muestra las filas de la suya. El navegador envía únicamente el usuario; el servidor decide la organización.</p>
+    <p id="user-error" class="error" role="alert" hidden></p>
+  </section>
+
   <section class="panel" aria-labelledby="upload-title">
     <h2 id="upload-title">Cargar e inspeccionar un PDF</h2>
     <p class="note">La carga y la inspección son locales. Sólo una pregunta posterior a la IA puede enviar a OpenRouter fragmentos recuperados del PDF. Las llamadas al modelo pueden tener costo; el umbral aproximado 0,55 fue calibrado para este laboratorio con BAAI/bge-m3 y no es universal.</p>
@@ -122,6 +131,7 @@
 
   <section id="results" class="panel" aria-labelledby="results-title" hidden>
     <h2 id="results-title">Resultado</h2>
+    <p id="query-user" class="note"></p>
     <h3>Respuesta</h3>
     <p id="answer"></p>
     <section id="sql-block" hidden>
@@ -162,6 +172,8 @@
   const mode = document.querySelector('#mode');
   const modeGuide = document.querySelector('#mode-guide');
   const documentSelect = document.querySelector('#document-id');
+  const userSelect = document.querySelector('#user-id');
+  const userError = document.querySelector('#user-error');
   const uploadForm = document.querySelector('#upload-form');
   const uploadSubmit = document.querySelector('#upload-submit');
   const uploadStatus = document.querySelector('#upload-status');
@@ -533,7 +545,27 @@
     });
   }
 
+  async function loadUsers() {
+    try {
+      const response = await fetch('/api/users');
+      const users = await readJson(response);
+      if (!response.ok || !Array.isArray(users) || !users.length) throw new Error('sin usuarios');
+      userSelect.replaceChildren();
+      users.forEach((user) => {
+        const option = document.createElement('option');
+        option.value = user.id;
+        option.textContent = user.label;
+        userSelect.appendChild(option);
+      });
+      userError.hidden = true;
+    } catch (error) {
+      userError.textContent = 'No se pudo cargar la lista de usuarios simulados.';
+      userError.hidden = false;
+    }
+  }
+
   function renderResponse(payload) {
+    setText('#query-user', payload.user ? `Consultando como: ${payload.user.label}` : '');
     setText('#answer', payload.answer);
     const sqlBlock = document.querySelector('#sql-block');
     sqlBlock.hidden = !payload.sql;
@@ -557,7 +589,9 @@
     try {
       const selectedDocument = documentSelect.value;
       const queryMode = mode.value;
+      if (!userSelect.value) throw new Error('Elegí un usuario simulado antes de consultar.');
       const requestBody = {
+        user_id: userSelect.value,
         mode: queryMode,
         question: question.value,
         top_k: Number(document.querySelector('#top-k').value)
@@ -584,6 +618,7 @@
   });
 
   updateQueryModeUI();
+  loadUsers();
   loadDocuments();
 </script>
 </body>

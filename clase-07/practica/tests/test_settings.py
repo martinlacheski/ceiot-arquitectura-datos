@@ -415,10 +415,10 @@ def test_served_ui_reflects_configured_limits(monkeypatch: pytest.MonkeyPatch) -
 def test_query_request_follows_configured_top_k_limit() -> None:
     code = """
 from api.web_app import QueryRequest
-QueryRequest(question="hola mundo", mode="rag", top_k=2)
-print(QueryRequest(question="hola mundo", mode="rag").top_k)
+QueryRequest(user_id="ana", question="hola mundo", mode="rag", top_k=2)
+print(QueryRequest(user_id="ana", question="hola mundo", mode="rag").top_k)
 try:
-    QueryRequest(question="hola mundo", mode="rag", top_k=3)
+    QueryRequest(user_id="ana", question="hola mundo", mode="rag", top_k=3)
 except ValueError:
     print("rechazado")
 """

@@ -17,6 +17,7 @@ services:
       - ./postgres/init/04-ai-views.sql:/docker-entrypoint-initdb.d/04-ai-views.sql:ro
       - ./postgres/init/05-document-upload.sql:/docker-entrypoint-initdb.d/05-document-upload.sql:ro
       - ./postgres/init/06-ai-open-access.sql:/docker-entrypoint-initdb.d/06-ai-open-access.sql:ro
+      - ./postgres/init/07-tenant-rls.sql:/docker-entrypoint-initdb.d/07-tenant-rls.sql:ro
       # Scripts accesibles desde el contenedor: psql -f /lab/seed/... o /lab/examples/...
       - ./postgres/seed:/lab/seed:ro
       - ./postgres/examples:/lab/examples:ro

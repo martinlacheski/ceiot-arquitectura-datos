@@ -12,6 +12,10 @@ from api.openrouter_client import OpenRouterClient  # type: ignore[import-not-fo
 from shared.sql_guard import SQLRejected  # type: ignore[import-not-found]
 from shared.sql_query import QueryResult  # type: ignore[import-not-found]
 from shared.sql_schema import SchemaPrompt  # type: ignore[import-not-found]
+from shared.tenants import resolve_user  # type: ignore[import-not-found]
+
+ANA = resolve_user("ana")
+ANA_USER = {"id": "ana", "label": "Ana — Organización A"}
 
 VALID_SQL = (
     "SELECT AVG(value) AS average_co2 FROM measurements "
@@ -25,7 +29,7 @@ FAKE_SCHEMA = SchemaPrompt("public.measurements\n  variable text\n  value numeri
 @pytest.fixture(autouse=True)
 def _fake_live_schema(monkeypatch: pytest.MonkeyPatch) -> None:
     # Workflow tests must not depend on the database: the live schema has its own tests.
-    monkeypatch.setattr(workflows, "schema_prompt", lambda: FAKE_SCHEMA)
+    monkeypatch.setattr(workflows, "schema_prompt", lambda _tenant_id: FAKE_SCHEMA)
 CHUNKS = [
     {
         "document_id": "upload-0123456789abcdef01234567",
@@ -159,12 +163,12 @@ def test_text_to_sql_validates_then_executes_with_ui_friendly_result(
     chat = FakeChat(VALID_SQL, "El promedio de CO2 fue 805,67 ppm.")
     observed: list[str] = []
 
-    def execute(validated: Any) -> QueryResult:
+    def execute(validated: Any, _tenant_id: int) -> QueryResult:
         observed.append(validated.sql)
         return RESULT
 
     monkeypatch.setattr(workflows, "execute_validated_sql", execute)
-    response = workflows.run_text_to_sql("Promedio de CO2 del día", 3, client=chat)  # type: ignore[arg-type]
+    response = workflows.run_text_to_sql("Promedio de CO2 del día", 3, tenant=ANA, client=chat)  # type: ignore[arg-type]
 
     assert observed == [response["sql"]]
     assert response["sql"].startswith("SELECT AVG(value)")
@@ -195,9 +199,9 @@ def test_text_to_sql_reports_null_average_as_no_data_and_keeps_evidence(
         rows=({"average_co2": None},),
         byte_count=8,
     )
-    monkeypatch.setattr(workflows, "execute_validated_sql", lambda _: null_result)
+    monkeypatch.setattr(workflows, "execute_validated_sql", lambda _validated, _tenant_id: null_result)
 
-    response = workflows.run_text_to_sql("Promedio de CO2 del día", 3, client=chat)  # type: ignore[arg-type]
+    response = workflows.run_text_to_sql("Promedio de CO2 del día", 3, tenant=ANA, client=chat)  # type: ignore[arg-type]
 
     assert response["sql"].startswith("SELECT AVG(value)")
     assert response["rows"] == [{"average_co2": None}]
@@ -224,10 +228,10 @@ def test_integrated_returns_telemetry_and_manual_sources_without_claiming_citati
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     chat = FakeChat(BOTH_BRANCHES_PLAN, VALID_SQL, "El promedio de CO2 fue 805,67 ppm.")
-    monkeypatch.setattr(workflows, "execute_validated_sql", lambda _: RESULT)
+    monkeypatch.setattr(workflows, "execute_validated_sql", lambda _validated, _tenant_id: RESULT)
     monkeypatch.setattr(workflows, "retrieve_manual", lambda _q, _k: CHUNKS)
 
-    response = workflows.run_integrated("¿Qué indica AIR-002?", 2, client=chat)  # type: ignore[arg-type]
+    response = workflows.run_integrated("¿Qué indica AIR-002?", 2, tenant=ANA, client=chat)  # type: ignore[arg-type]
 
     assert response["sql"] and response["rows"]
     assert [source["type"] for source in response["sources"]] == [
@@ -260,10 +264,10 @@ def test_integrated_without_manual_skips_synthesis_and_rejects_fabricated_citati
         "el promedio fue 9999 ppm."
     )
     chat = FakeChat(BOTH_BRANCHES_PLAN, VALID_SQL, fabricated)
-    monkeypatch.setattr(workflows, "execute_validated_sql", lambda _: RESULT)
+    monkeypatch.setattr(workflows, "execute_validated_sql", lambda _validated, _tenant_id: RESULT)
     monkeypatch.setattr(workflows, "retrieve_manual", lambda _q, _k: [])
 
-    response = workflows.run_integrated("¿Cuál fue el promedio de CO2?", 4, client=chat)  # type: ignore[arg-type]
+    response = workflows.run_integrated("¿Cuál fue el promedio de CO2?", 4, tenant=ANA, client=chat)  # type: ignore[arg-type]
 
     assert response["rows"] == [{"average_co2": 805.67}]
     assert [source["type"] for source in response["sources"]] == ["telemetry"]
@@ -283,7 +287,7 @@ def test_integrated_selected_document_without_evidence_keeps_only_telemetry(
     document_id = "upload-0123456789abcdef01234567"
     chat = FakeChat(BOTH_BRANCHES_PLAN, VALID_SQL, "no debe consumirse")
     observed: list[str] = []
-    monkeypatch.setattr(workflows, "execute_validated_sql", lambda _: RESULT)
+    monkeypatch.setattr(workflows, "execute_validated_sql", lambda _validated, _tenant_id: RESULT)
 
     def retrieve(
         _question: str, _top_k: int, *, document_id: str
@@ -297,6 +301,7 @@ def test_integrated_selected_document_without_evidence_keeps_only_telemetry(
         "¿Qué indica AIR-002?",
         2,
         document_id=document_id,
+        tenant=ANA,
         client=chat,  # type: ignore[arg-type]
     )
 
@@ -311,7 +316,7 @@ def test_integrated_orchestrator_routes_telemetry_only_without_manual_retrieval(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     chat = FakeChat(TELEMETRY_ONLY_PLAN, VALID_SQL)
-    monkeypatch.setattr(workflows, "execute_validated_sql", lambda _: RESULT)
+    monkeypatch.setattr(workflows, "execute_validated_sql", lambda _validated, _tenant_id: RESULT)
 
     def must_not_retrieve(*_args: Any, **_kwargs: Any) -> list[dict[str, Any]]:
         raise AssertionError("manual retrieval must not run for a telemetry-only plan")
@@ -319,7 +324,7 @@ def test_integrated_orchestrator_routes_telemetry_only_without_manual_retrieval(
     monkeypatch.setattr(workflows, "retrieve_manual", must_not_retrieve)
 
     response = workflows.run_integrated(
-        "¿Cuál fue la temperatura promedio del Aula 204?", 2, client=chat  # type: ignore[arg-type]
+        "¿Cuál fue la temperatura promedio del Aula 204?", 2, tenant=ANA, client=chat  # type: ignore[arg-type]
     )
 
     assert response["sql"] and response["rows"] == [{"average_co2": 805.67}]
@@ -341,7 +346,7 @@ def test_integrated_orchestrator_routes_manual_only_without_sql_generation(
     monkeypatch.setattr(workflows, "retrieve_manual", lambda _q, _k: CHUNKS)
 
     response = workflows.run_integrated(
-        "¿Cómo debe recalibrarse el sensor?", 2, client=chat  # type: ignore[arg-type]
+        "¿Cómo debe recalibrarse el sensor?", 2, tenant=ANA, client=chat  # type: ignore[arg-type]
     )
 
     assert response["sql"] is None
@@ -356,10 +361,10 @@ def test_integrated_malformed_plan_falls_back_to_running_both_branches(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     chat = FakeChat("esto no es JSON", VALID_SQL, "Respuesta combinada.")
-    monkeypatch.setattr(workflows, "execute_validated_sql", lambda _: RESULT)
+    monkeypatch.setattr(workflows, "execute_validated_sql", lambda _validated, _tenant_id: RESULT)
     monkeypatch.setattr(workflows, "retrieve_manual", lambda _q, _k: CHUNKS)
 
-    response = workflows.run_integrated("¿Qué indica AIR-002?", 2, client=chat)  # type: ignore[arg-type]
+    response = workflows.run_integrated("¿Qué indica AIR-002?", 2, tenant=ANA, client=chat)  # type: ignore[arg-type]
 
     assert "orquestador-fallback" in response["trace"]
     assert [source["type"] for source in response["sources"]] == [
@@ -375,14 +380,14 @@ def test_generated_bad_sql_is_rejected_before_execution(
     chat = FakeChat("DELETE FROM measurements", "DROP TABLE measurements")
     executed = False
 
-    def must_not_execute(_: Any) -> QueryResult:
+    def must_not_execute(_: Any, _tenant_id: int) -> QueryResult:
         nonlocal executed
         executed = True
         return RESULT
 
     monkeypatch.setattr(workflows, "execute_validated_sql", must_not_execute)
     with pytest.raises(SQLRejected, match="lectura"):
-        workflows.run_text_to_sql("Borrá todo", 2, client=chat)  # type: ignore[arg-type]
+        workflows.run_text_to_sql("Borrá todo", 2, tenant=ANA, client=chat)  # type: ignore[arg-type]
     assert executed is False
     assert len(chat.calls) == 2
 
@@ -393,7 +398,7 @@ def test_failed_sql_is_retried_once_with_the_database_error(
     chat = FakeChat("SELECT nope FROM measurements", VALID_SQL, "El promedio fue 805,67 ppm.")
     attempts: list[str] = []
 
-    def execute(validated: Any) -> QueryResult:
+    def execute(validated: Any, _tenant_id: int) -> QueryResult:
         attempts.append(validated.sql)
         if len(attempts) == 1:
             raise psycopg.errors.UndefinedColumn('column "nope" does not exist')
@@ -401,7 +406,7 @@ def test_failed_sql_is_retried_once_with_the_database_error(
 
     monkeypatch.setattr(workflows, "execute_validated_sql", execute)
 
-    response = workflows.run_text_to_sql("Promedio de CO2", 2, client=chat)  # type: ignore[arg-type]
+    response = workflows.run_text_to_sql("Promedio de CO2", 2, tenant=ANA, client=chat)  # type: ignore[arg-type]
 
     assert len(attempts) == 2
     assert "reintento-sql" in response["trace"]
@@ -415,13 +420,13 @@ def test_sql_failing_twice_is_reported_as_a_visible_rejection(
 ) -> None:
     chat = FakeChat("SELECT nope FROM measurements", "SELECT nope2 FROM measurements")
 
-    def execute(_validated: Any) -> QueryResult:
+    def execute(_validated: Any, _tenant_id: int) -> QueryResult:
         raise psycopg.errors.UndefinedColumn('column "nope" does not exist')
 
     monkeypatch.setattr(workflows, "execute_validated_sql", execute)
 
     with pytest.raises(SQLRejected, match="does not exist"):
-        workflows.run_text_to_sql("Promedio de CO2", 2, client=chat)  # type: ignore[arg-type]
+        workflows.run_text_to_sql("Promedio de CO2", 2, tenant=ANA, client=chat)  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize("mode", ["rag", "text-to-sql", "integrated"])
@@ -436,16 +441,16 @@ def test_api_exposes_all_three_modes(
         "trace": [mode],
     }
     monkeypatch.setitem(
-        workflows.WORKFLOWS, mode, lambda _question, _top_k: expected
+        workflows.WORKFLOWS, mode, lambda _question, _top_k, *, tenant: expected
     )
 
     response = TestClient(web_app.app).post(
         "/api/query",
-        json={"question": "¿Qué ocurrió?", "mode": mode, "top_k": 2},
+        json={"question": "¿Qué ocurrió?", "mode": mode, "top_k": 2, "user_id": "ana"},
     )
 
     assert response.status_code == 200
-    assert response.json() == expected
+    assert response.json() == {**expected, "user": ANA_USER}
 
 
 def test_api_accepts_a_free_text_question_not_present_in_examples(
@@ -461,18 +466,18 @@ def test_api_accepts_a_free_text_question_not_present_in_examples(
         "trace": ["rag"],
     }
 
-    def rag(question: str, top_k: int) -> dict[str, Any]:
+    def rag(question: str, top_k: int, *, tenant: Any) -> dict[str, Any]:
         observed.append((question, top_k))
         return expected
 
     monkeypatch.setitem(workflows.WORKFLOWS, "rag", rag)
     response = TestClient(web_app.app).post(
         "/api/query",
-        json={"question": custom_question, "mode": "rag", "top_k": 4},
+        json={"question": custom_question, "mode": "rag", "top_k": 4, "user_id": "ana"},
     )
 
     assert response.status_code == 200
-    assert response.json() == expected
+    assert response.json() == {**expected, "user": ANA_USER}
     assert observed == [(custom_question, 4)]
 
 
@@ -488,18 +493,18 @@ def test_api_uses_four_manual_chunks_by_default(
         "trace": ["integrated"],
     }
 
-    def integrated(question: str, top_k: int) -> dict[str, Any]:
+    def integrated(question: str, top_k: int, *, tenant: Any) -> dict[str, Any]:
         observed.append((question, top_k))
         return expected
 
     monkeypatch.setitem(workflows.WORKFLOWS, "integrated", integrated)
     response = TestClient(web_app.app).post(
         "/api/query",
-        json={"question": "¿Cómo reinicio si falla?", "mode": "integrated"},
+        json={"question": "¿Cómo reinicio si falla?", "mode": "integrated", "user_id": "ana"},
     )
 
     assert response.status_code == 200
-    assert response.json() == expected
+    assert response.json() == {**expected, "user": ANA_USER}
     assert observed == [("¿Cómo reinicio si falla?", 4)]
 
 
@@ -546,7 +551,7 @@ def test_missing_key_only_blocks_ai_endpoint(
     assert client.get("/health").json() == {"status": "ok"}
     response = client.post(
         "/api/query",
-        json={"question": "Promedio de CO2", "mode": "text-to-sql", "top_k": 2},
+        json={"question": "Promedio de CO2", "mode": "text-to-sql", "top_k": 2, "user_id": "ana"},
     )
 
     assert response.status_code == 503
@@ -556,17 +561,17 @@ def test_missing_key_only_blocks_ai_endpoint(
 def test_request_validation_and_visible_sql_rejection(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def reject(_question: str, _top_k: int) -> dict[str, Any]:
+    def reject(_question: str, _top_k: int, *, tenant: Any) -> dict[str, Any]:
         raise SQLRejected("se permite exactamente una sentencia SELECT", "DROP TABLE x")
 
     monkeypatch.setitem(workflows.WORKFLOWS, "text-to-sql", reject)
     client = TestClient(web_app.app)
     invalid = client.post(
-        "/api/query", json={"question": "  ", "mode": "rag", "top_k": 5}
+        "/api/query", json={"question": "  ", "mode": "rag", "top_k": 5, "user_id": "ana"}
     )
     rejected = client.post(
         "/api/query",
-        json={"question": "Consulta insegura", "mode": "text-to-sql", "top_k": 2},
+        json={"question": "Consulta insegura", "mode": "text-to-sql", "top_k": 2, "user_id": "ana"},
     )
 
     assert invalid.status_code == 422
@@ -607,7 +612,7 @@ def test_database_and_model_failures_become_sanitized_503(
 
     model_response = client.post(
         "/api/query",
-        json={"question": "¿Cómo calibro?", "mode": "rag", "top_k": 2},
+        json={"question": "¿Cómo calibro?", "mode": "rag", "top_k": 2, "user_id": "ana"},
     )
     assert model_response.status_code == 503
     assert model_response.json() == {
@@ -627,7 +632,7 @@ def test_database_and_model_failures_become_sanitized_503(
     monkeypatch.setenv("RAG_POSTGRES_PASSWORD", "not-returned")
     database_response = client.post(
         "/api/query",
-        json={"question": "¿Cómo calibro?", "mode": "rag", "top_k": 2},
+        json={"question": "¿Cómo calibro?", "mode": "rag", "top_k": 2, "user_id": "ana"},
     )
 
     assert database_response.status_code == 503
@@ -644,13 +649,13 @@ def test_sql_database_failure_is_typed_and_sanitized(
 ) -> None:
     chat = FakeChat(VALID_SQL)
 
-    def fail_sql(_validated: Any) -> QueryResult:
+    def fail_sql(_validated: Any, _tenant_id: int) -> QueryResult:
         raise psycopg.OperationalError("dbname=private password=supersecret")
 
     monkeypatch.setattr(workflows, "execute_validated_sql", fail_sql)
 
     with pytest.raises(workflows.ServiceUnavailable) as captured:
-        workflows.run_text_to_sql("Promedio de CO2", 2, client=chat)  # type: ignore[arg-type]
+        workflows.run_text_to_sql("Promedio de CO2", 2, tenant=ANA, client=chat)  # type: ignore[arg-type]
 
     assert str(captured.value) == "La base de telemetría no está disponible temporalmente."
     assert "supersecret" not in str(captured.value)

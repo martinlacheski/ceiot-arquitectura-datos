@@ -10,6 +10,7 @@ con un mensaje claro, lo que nunca puede ser una lectura.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from typing import Never
 
@@ -28,6 +29,27 @@ _WRITE_NODE_NAMES = (
 _WRITE_NODES = tuple(
     getattr(exp, name) for name in _WRITE_NODE_NAMES if hasattr(exp, name)
 )
+
+
+# El aislamiento entre organizaciones (RLS) depende de la variable de sesión
+# app.tenant_id, que CUALQUIER rol puede cambiar con set_config. Si el SQL
+# generado pudiera llamarla, un modelo (o una inyección de prompt) elegiría el
+# tenant que quiera. Se rechaza todo lo que cambie o lea el contexto, o que
+# ejecute SQL armado como texto (query_to_xml, dblink) y así lo esconda.
+#
+# La búsqueda es textual, sobre el SQL sin comillas dobles, y corre
+# ANTES del análisis: atrapa también sintaxis que sqlglot no entiende.
+_FORBIDDEN_CALL = re.compile(
+    r"\b(set_config|current_setting|pg_reload_conf|dblink\w*"
+    r"|query_to_xml\w*|cursor_to_xml\w*)\b",
+    re.IGNORECASE,
+)
+_SQL_COMMENT = re.compile(r"/\*.*?\*/|--[^\n]*", re.DOTALL)
+# U&"..." escribe un identificador con secuencias \XXXX: permitiría escribir
+# set_config sin que aparezca literalmente.
+_UNICODE_ESCAPED_IDENTIFIER = re.compile(r"\bu&\s*\"", re.IGNORECASE)
+# Si sqlglot no puede analizar la sentencia, al menos debe empezar como lectura.
+_READ_START = re.compile(r"^[\s(]*(select|with|values|table)\b", re.IGNORECASE)
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,6 +81,22 @@ def _reject(reason: str, sql: str) -> Never:
     raise SQLRejected(reason, sql)
 
 
+def _reject_context_tampering(sql: str) -> None:
+    # Se busca en el texto completo, comentarios incluidos: quitar comentarios
+    # con una regex permitiría esconder la llamada tras un literal con "--".
+    if _UNICODE_ESCAPED_IDENTIFIER.search(sql):
+        _reject("no se permiten identificadores con escapes Unicode (U&\"...\")", sql)
+    # Sin comillas: "set_config"(...) y pg_catalog."set_config"(...) también caen.
+    normalized = sql.replace('"', "")
+    found = _FORBIDDEN_CALL.search(normalized)
+    if found:
+        _reject(
+            f"{found.group(1).lower()} no está permitido: podría alterar el contexto "
+            "de la organización",
+            sql,
+        )
+
+
 def validate_sql(sql: str) -> ValidatedSQL:
     """Acepta exactamente una consulta de lectura; el resto lo decide la base."""
 
@@ -66,6 +104,8 @@ def validate_sql(sql: str) -> ValidatedSQL:
         _reject("la consulta está vacía", sql if isinstance(sql, str) else "")
     if len(sql) > MAX_SQL_CHARS:
         _reject(f"la consulta supera {MAX_SQL_CHARS} caracteres", sql)
+
+    _reject_context_tampering(sql)
 
     try:
         statements = [
@@ -75,6 +115,8 @@ def validate_sql(sql: str) -> ValidatedSQL:
         # sqlglot no conoce toda la sintaxis de las extensiones (por ejemplo
         # algunos operadores de pgvector). La base igual la ejecuta en una
         # transacción READ ONLY y psycopg no admite varias sentencias juntas.
+        if not _READ_START.match(_SQL_COMMENT.sub(" ", sql)):
+            _reject("sólo se permiten consultas de lectura (SELECT o WITH ... SELECT)", sql)
         return ValidatedSQL(sql=sql.strip().rstrip(";").strip())
 
     if len(statements) != 1:

@@ -41,7 +41,8 @@ from shared import document_catalog  # type: ignore[import-not-found]
 from shared.rag_connection import validate_document_id  # type: ignore[import-not-found]
 from shared.retrieval import MAX_TOP_K  # type: ignore[import-not-found]
 from shared.sql_guard import SQLRejected  # type: ignore[import-not-found]
-from shared.sql_schema import schema_prompt  # type: ignore[import-not-found]
+from shared.sql_schema import SchemaUnavailable, schema_prompt  # type: ignore[import-not-found]
+from shared.tenants import Tenant, list_users, resolve_user  # type: ignore[import-not-found]
 
 app = FastAPI(title="Laboratorio IoT Clase 06", version="1.0.0")
 INDEX_HTML = Path(__file__).with_name("static") / "index.html"
@@ -63,11 +64,31 @@ _GENERIC_STREAM_ERROR = "La carga no está disponible temporalmente."
 _INVALID_UPSTREAM_ERROR = "El servicio de carga devolvió una respuesta inválida."
 
 
+def _tenant_for(user_id: str) -> Tenant:
+    """Traduce el usuario simulado a su organización; 422 si no existe."""
+
+    try:
+        return resolve_user(user_id)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
 class QueryRequest(BaseModel):
+    # extra="forbid": un organization_id o tenant_id enviado por el cliente no se
+    # ignora en silencio, se rechaza. La organización sale siempre de user_id.
+    model_config = ConfigDict(extra="forbid")
+
+    user_id: str
     question: str = Field(min_length=3, max_length=500)
     mode: Literal["rag", "text-to-sql", "integrated"]
     top_k: int = Field(default=DEFAULT_TOP_K, ge=1, le=MAX_TOP_K)
     document_id: str | None = None
+
+    @field_validator("user_id")
+    @classmethod
+    def validate_user(cls, value: str) -> str:
+        resolve_user(value)
+        return value
 
     @field_validator("question")
     @classmethod
@@ -87,6 +108,8 @@ class QueryRequest(BaseModel):
 
 class QueryResponse(BaseModel):
     answer: str
+    # Usuario simulado que consultó (id y etiqueta); la UI muestra "Consultando como".
+    user: dict[str, str]
     sql: str | None
     rows: list[dict[str, Any]]
     sources: list[dict[str, Any]]
@@ -166,10 +189,20 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/api/users")
+def users() -> list[dict[str, str]]:
+    return list_users()
+
+
 @app.get("/api/sql-schema")
-def sql_schema() -> dict[str, str]:
-    # Muestra exactamente el esquema que Text-to-SQL envía al modelo.
-    prompt = schema_prompt()
+def sql_schema(user_id: str) -> dict[str, str]:
+    # Muestra exactamente el esquema que Text-to-SQL envía al modelo, con los
+    # valores de ejemplo que ve la organización del usuario.
+    tenant = _tenant_for(user_id)
+    try:
+        prompt = schema_prompt(tenant.organization_id)
+    except SchemaUnavailable as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
     return {"source": prompt.source, "text": prompt.text}
 
 
@@ -427,15 +460,19 @@ def query(request: QueryRequest) -> dict[str, Any]:
             status_code=422,
             detail="El modo text-to-sql no admite filtro por documento.",
         )
+    tenant = _tenant_for(request.user_id)
     try:
         workflow = workflows.WORKFLOWS[request.mode]
         if request.document_id is None:
-            return workflow(request.question, request.top_k)
-        return workflow(
-            request.question,
-            request.top_k,
-            document_id=request.document_id,
-        )
+            result = workflow(request.question, request.top_k, tenant=tenant)
+        else:
+            result = workflow(
+                request.question,
+                request.top_k,
+                document_id=request.document_id,
+                tenant=tenant,
+            )
+        return {**result, "user": {"id": tenant.user_id, "label": tenant.label}}
     except MissingOpenRouterKey as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
     except SQLRejected as error:

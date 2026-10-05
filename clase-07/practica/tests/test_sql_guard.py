@@ -83,7 +83,7 @@ def test_rejected_sql_preview_is_single_line_escaped_and_bounded() -> None:
 
 
 def test_executes_a_join_over_the_real_tables_as_ai_readonly() -> None:
-    result = execute_validated_sql(validate_sql(JOIN_AVERAGE_QUERY))
+    result = execute_validated_sql(validate_sql(JOIN_AVERAGE_QUERY), 1)
 
     assert result.columns == ("average_co2",)
     assert result.rows[0]["average_co2"].quantize(Decimal("0.001")) == Decimal("805.667")
@@ -91,7 +91,7 @@ def test_executes_a_join_over_the_real_tables_as_ai_readonly() -> None:
 
 def test_large_results_are_truncated_instead_of_failing() -> None:
     result = execute_validated_sql(
-        validate_sql("SELECT generate_series(1, 500) AS n")
+        validate_sql("SELECT generate_series(1, 500) AS n"), 1
     )
 
     assert len(result.rows) == MAX_RESULT_ROWS
@@ -149,3 +149,68 @@ def test_readonly_roles_have_only_the_expected_privileges() -> None:
             False, False, False,
             True, False, True, False,
         )
+
+
+# --- Manipulación del contexto de tenant (clase 7) ---------------------------
+# app.tenant_id es una variable de sesión que cualquier rol puede cambiar. Si el
+# SQL generado pudiera llamar a set_config, un modelo (o una inyección de prompt)
+# saltearía RLS. El guard debe rechazarlo antes de ejecutar.
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT set_config('app.tenant_id', '2', true), count(*) FROM devices",
+        "WITH x AS (SELECT set_config('app.tenant_id', '2', true)) SELECT * FROM devices, x",
+        "SELECT * FROM devices WHERE organization_id = (SELECT set_config('app.tenant_id','2',true)::bigint)",
+        "SELECT SeT_CoNfIg('app.tenant_id', '2', true)",
+        "SELECT pg_catalog.set_config('app.tenant_id', '2', true)",
+        'SELECT "set_config"(\'app.tenant_id\', \'2\', true)',
+        'SELECT pg_catalog."set_config"(\'app.tenant_id\', \'2\', true)',
+        'SELECT U&"set\\005fconfig"(\'app.tenant_id\', \'2\', true)',
+        "SELECT set_config /* truco */ ('app.tenant_id', '2', true)",
+        "SELECT current_setting('app.tenant_id', true)",
+        "SELECT pg_catalog.current_setting('app.tenant_id')",
+        "SELECT pg_reload_conf()",
+        "SELECT * FROM dblink('dbname=x', 'select 1') AS t(a int)",
+        "SELECT dblink_exec('dbname=x', 'select 1')",
+        "SELECT query_to_xml('select set_con' || 'fig(''app.tenant_id'',''2'',true)', true, false, '')",
+        "SELECT cursor_to_xml('c'::refcursor, 1, true, false, '')",
+    ],
+)
+def test_rejects_sql_that_could_change_or_read_the_tenant_context(sql: str) -> None:
+    with pytest.raises(SQLRejected):
+        validate_sql(sql)
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SET app.tenant_id = '2'",
+        "SET LOCAL app.tenant_id = '2'",
+        "RESET app.tenant_id",
+        "RESET ALL",
+        "SET ROLE ceiot",
+        "SET SESSION AUTHORIZATION ceiot",
+        "SHOW app.tenant_id",
+        "SELECT 1; SET app.tenant_id = '2'",
+    ],
+)
+def test_rejects_set_reset_and_show_statements(sql: str) -> None:
+    with pytest.raises(SQLRejected):
+        validate_sql(sql)
+
+
+def test_unparseable_sql_that_is_not_a_read_is_still_rejected() -> None:
+    with pytest.raises(SQLRejected):
+        validate_sql("RESET app.tenant_id FOR ALL THE THINGS (")
+
+
+def test_ordinary_queries_that_mention_similar_words_are_still_accepted() -> None:
+    validate_sql("SELECT device_id FROM devices WHERE model = 'ENV-X'")
+    validate_sql("SELECT count(*) AS settings FROM devices")
+
+
+def test_a_comment_marker_inside_a_literal_cannot_hide_a_forbidden_call() -> None:
+    with pytest.raises(SQLRejected):
+        validate_sql("SELECT '--', set_config('app.tenant_id', '2', true)")
