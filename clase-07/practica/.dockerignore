@@ -1,0 +1,14 @@
+# Contexto mínimo de la imagen compartida. El archivo .env del usuario no
+# debe enviarse al motor Docker, aunque el Dockerfile no lo copie.
+**
+!Dockerfile
+!requirements.txt
+!api/
+!api/**
+!loader/
+!loader/**
+!shared/
+!shared/**
+**/.env*
+**/__pycache__/
+**/*.pyc

@@ -1,0 +1,609 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Laboratorio IoT · Clase 06</title>
+  <style>
+    :root { color-scheme: light; font-family: system-ui, sans-serif; background: #f3f6f8; color: #17212b; }
+    body { margin: 0; }
+    main { width: min(920px, calc(100% - 2rem)); margin: 2rem auto; }
+    h1, h2, h3, h4 { line-height: 1.2; }
+    .panel { background: white; border: 1px solid #ccd7df; border-radius: .65rem; padding: 1.2rem; margin-block: 1rem; }
+    form { display: grid; gap: 1rem; }
+    label { display: grid; gap: .35rem; font-weight: 650; }
+    input, textarea, select, button { font: inherit; padding: .65rem; border: 1px solid #8193a1; border-radius: .35rem; }
+    textarea { min-height: 7rem; resize: vertical; }
+    button { width: fit-content; border-color: #075985; background: #075985; color: white; font-weight: 700; cursor: pointer; }
+    button:disabled { opacity: .65; cursor: wait; }
+    .examples, .document-list { display: grid; gap: .5rem; margin-top: .65rem; }
+    .example { width: 100%; text-align: left; border-color: #8193a1; background: #edf2f5; color: #17212b; font-weight: 500; }
+    .mode-guide { margin: -.35rem 0 0; padding: .75rem; border-left: .3rem solid #0e7490; border-radius: .25rem; background: #e8f4f7; color: #263d48; font-size: .92rem; line-height: 1.45; }
+    .note { color: #425466; font-size: .95rem; }
+    .error { color: #a01c1c; font-weight: 700; }
+    pre { overflow-x: auto; white-space: pre-wrap; background: #edf2f5; padding: .75rem; border-radius: .35rem; }
+    ol, ul { padding-left: 1.4rem; }
+    dl { display: grid; grid-template-columns: minmax(9rem, auto) 1fr; gap: .4rem .8rem; }
+    dt { font-weight: 700; }
+    dd { margin: 0; overflow-wrap: anywhere; }
+    .source, .chunk, .document-item { border-left: .25rem solid #0e7490; padding-left: .8rem; margin-block: .8rem; }
+    .excerpt { white-space: pre-wrap; }
+    .document-item > button { margin-top: .25rem; }
+    .document-item > button[aria-expanded="true"] { border-color: #075985; background: white; color: #075985; }
+    #document-details { max-height: 28rem; overflow-y: auto; margin-top: .6rem; padding: .75rem; border: 1px solid #ccd7df; border-radius: .35rem; background: #fafcfd; }
+    #document-details h3 { margin-top: 0; }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Consulta guiada del laboratorio IoT</h1>
+    <p>Explorá el manual, los PDF que cargues, la telemetría validada o ambas fuentes.</p>
+  </header>
+
+  <section class="panel" aria-labelledby="upload-title">
+    <h2 id="upload-title">Cargar e inspeccionar un PDF</h2>
+    <p class="note">La carga y la inspección son locales. Sólo una pregunta posterior a la IA puede enviar a OpenRouter fragmentos recuperados del PDF. Las llamadas al modelo pueden tener costo; el umbral aproximado 0,55 fue calibrado para este laboratorio con BAAI/bge-m3 y no es universal.</p>
+    <form id="upload-form">
+      <label for="pdf-file">Documento PDF
+        <input id="pdf-file" name="pdf" type="file" accept=".pdf,application/pdf" aria-describedby="pdf-help" required>
+      </label>
+      <p id="pdf-help" class="note">Máximo {{MAX_PDF_MIB}} MiB (el PDF se lee completo en memoria); el navegador hace una comprobación temprana, pero el servidor conserva la autoridad. Sin límite de páginas ni de fragmentos: la cantidad de fragmentos crece con el documento. La indexación tarda alrededor de 1,2 segundos por fragmento; un datasheet de unas 50 páginas tarda cerca de 2 minutos. Se admite sólo texto extraíble, no se realiza OCR y se rechazan PDF cifrados. Mostramos el progreso mientras se indexa.</p>
+      <button id="upload-submit" type="submit">Cargar PDF</button>
+      <p id="upload-status" role="status" aria-live="polite"></p>
+      <p id="upload-progress" role="status" aria-live="polite"></p>
+      <p id="upload-error" class="error" role="alert" hidden></p>
+    </form>
+    <section id="upload-result" aria-labelledby="upload-result-title" hidden>
+      <h3 id="upload-result-title">Carga completada</h3>
+      <p><strong>PDF almacenado.</strong> <span id="stored-state"></span></p>
+      <p><strong>Fragmentos generados.</strong> <span id="chunks-state"></span></p>
+      <p><strong>Embeddings indexados.</strong> <span id="indexed-state"></span></p>
+      <dl id="upload-summary"></dl>
+      <h4>Traza ordenada de carga</h4>
+      <ol id="upload-trace"></ol>
+    </section>
+    <section aria-labelledby="documents-title">
+      <h3 id="documents-title">Documentos disponibles</h3>
+      <p id="documents-status" role="status" aria-live="polite">Cargando documentos…</p>
+      <p id="documents-error" class="error" role="alert" hidden></p>
+      <div id="document-list" class="document-list"></div>
+    </section>
+    <div id="document-details-home">
+      <section id="document-details" aria-labelledby="document-details-title" tabindex="0" hidden>
+        <h3 id="document-details-title">Inspección del documento</h3>
+        <p id="inspect-error" class="error" role="alert" hidden></p>
+        <div id="document-metadata"></div>
+        <div id="document-pages"></div>
+      </section>
+    </div>
+  </section>
+
+  <section class="panel" aria-labelledby="query-title">
+    <h2 id="query-title">Nueva consulta</h2>
+    <form id="query-form">
+      <label for="mode">Qué querés consultar
+        <select id="mode" name="mode" aria-describedby="mode-guide">
+          <option value="rag">Consultar documentos (RAG)</option>
+          <option value="text-to-sql">Consultar telemetría (Text-to-SQL)</option>
+          <option value="integrated">Combinar telemetría y documentos (Integrado)</option>
+        </select>
+      </label>
+      <p id="mode-guide" class="mode-guide" aria-live="polite" aria-atomic="true"></p>
+      <label for="document-id">Documento para RAG
+        <select id="document-id" name="document_id">
+          <option value="">Todos los documentos</option>
+        </select>
+      </label>
+      <p id="document-filter-help" class="note">RAG e Integrado pueden limitar la recuperación al documento elegido. Text-to-SQL ignora y deshabilita esta selección porque consulta las tablas de telemetría, no los PDF.</p>
+      <label for="question">Escribí tu propia pregunta
+        <textarea id="question" name="question" required minlength="3" maxlength="500"
+          aria-describedby="question-help"></textarea>
+      </label>
+      <p id="question-help" class="note">La redacción es libre, pero las respuestas se basan en el manual inicial, los PDF que cargues y el esquema real de la base. Una pregunta ajena al dominio puede no encontrar evidencia, y todo SQL generado se ejecuta con un rol de sólo lectura.</p>
+      <details>
+        <summary>Ejemplos opcionales</summary>
+        <div class="examples">
+          <button class="example" type="button" data-mode="rag" data-manual-seed="true" data-question="¿Cómo debe recalibrarse el sensor ENV-X después de reemplazar la batería?">Documentos (manual inicial) · ¿Cómo debe recalibrarse el sensor ENV-X después de reemplazar la batería?</button>
+          <button class="example" type="button" data-mode="text-to-sql" data-question="¿Cuál fue la temperatura promedio del Aula 204 durante las últimas 24 horas?">Telemetría · ¿Cuál fue la temperatura promedio del Aula 204 durante las últimas 24 horas?</button>
+          <button class="example" type="button" data-mode="integrated" data-manual-seed="true" data-question="El sensor ENV-X del Aula 204 presenta mediciones anómalas. ¿Cuáles fueron sus valores promedio durante las últimas 24 horas y qué procedimiento de calibración indica su manual?">Integrado (mediciones y manual inicial) · El sensor ENV-X del Aula 204 presenta mediciones anómalas. ¿Cuáles fueron sus valores promedio durante las últimas 24 horas y qué procedimiento de calibración indica su manual?</button>
+        </div>
+      </details>
+      <label for="top-k">Cantidad máxima de fragmentos (1–{{MAX_TOP_K}})
+        <input id="top-k" name="top_k" type="number" min="1" max="{{MAX_TOP_K}}" value="{{DEFAULT_TOP_K}}" required>
+      </label>
+      <button id="submit" type="submit">Consultar</button>
+      <p class="note">Las llamadas a OpenRouter pueden tener costo. El corte de evidencia es aproximado (0,55): se calibró empíricamente para BAAI/bge-m3 con el manual inicial y no es universal para otros PDF.</p>
+      <p id="status" role="status" aria-live="polite"></p>
+      <p id="error" class="error" role="alert" hidden></p>
+    </form>
+  </section>
+
+  <section id="results" class="panel" aria-labelledby="results-title" hidden>
+    <h2 id="results-title">Resultado</h2>
+    <h3>Respuesta</h3>
+    <p id="answer"></p>
+    <section id="sql-block" hidden>
+      <h3>SQL validado</h3>
+      <pre id="sql"></pre>
+    </section>
+    <section id="rows-block" hidden>
+      <h3>Filas</h3>
+      <pre id="rows"></pre>
+    </section>
+    <h3>Traza ordenada de servicios</h3>
+    <ol id="trace"></ol>
+    <h3>Fuentes</h3>
+    <div id="sources"></div>
+  </section>
+</main>
+<script>
+  const MAX_PDF_BYTES = {{MAX_PDF_BYTES}};
+  const UPLOAD_STAGE_LABELS = {
+    pdf_validated: 'PDF validado',
+    chunks_embedded: 'Generando embeddings',
+    s3_stored: 'Guardando en almacenamiento',
+    s3_verified: 'Verificando almacenamiento',
+    postgres_indexed: 'Indexando en la base de datos'
+  };
+  const MANUAL_SEED_DOCUMENT_ID = "env-x-manual";
+  const MODE_GUIDES = {
+    rag: 'Busca con el modelo de embeddings local (BAAI/bge-m3) en el manual o PDF seleccionado (o en todos) y muestra la fuente con página, fragmento y distancia. OpenRouter sintetiza la respuesta sólo si encuentra fragmentos.',
+    'text-to-sql': 'OpenRouter genera una consulta SQL: el sistema lee el esquema real de la base (tablas, claves y valores) y se lo pasa al modelo, que puede usar JOIN, subconsultas, TimescaleDB y PostGIS. La consulta se ejecuta con un rol de sólo lectura; si la base la rechaza, el modelo la corrige una vez. Muestra el SQL y las filas. Este modo ignora los PDF, el documento elegido y la cantidad de fragmentos.',
+    integrated: 'Primero ejecuta SQL protegido de sólo lectura sobre la telemetría; después busca con el modelo de embeddings local en el documento seleccionado o en todos. Si encuentra fragmentos, OpenRouter sintetiza ambas evidencias y puede ser una segunda llamada al proveedor. Muestra SQL, filas y cada fuente documental con página, fragmento y distancia; sin evidencia de PDF no atribuye respaldo al documento.'
+  };
+  const MODE_COST_NOTE = ' Cambiar esta selección no envía ninguna consulta. Sólo Consultar puede contactar a OpenRouter y generar costo.';
+  const form = document.querySelector('#query-form');
+  const submit = document.querySelector('#submit');
+  const status = document.querySelector('#status');
+  const errorBox = document.querySelector('#error');
+  const results = document.querySelector('#results');
+  const question = document.querySelector('#question');
+  const mode = document.querySelector('#mode');
+  const modeGuide = document.querySelector('#mode-guide');
+  const documentSelect = document.querySelector('#document-id');
+  const uploadForm = document.querySelector('#upload-form');
+  const uploadSubmit = document.querySelector('#upload-submit');
+  const uploadStatus = document.querySelector('#upload-status');
+  const uploadError = document.querySelector('#upload-error');
+  let catalogRequestGeneration = 0;
+  let inspectRequestGeneration = 0;
+  // A single inspection panel is reused: it moves below the inspected document and
+  // returns to its home container when hidden or before the catalog is re-rendered.
+  const documentDetails = document.querySelector('#document-details');
+  const documentDetailsHome = document.querySelector('#document-details-home');
+  let inspectedDocumentId = null;
+
+  document.querySelectorAll('.example').forEach((example) => {
+    example.addEventListener('click', () => {
+      question.value = example.dataset.question;
+      mode.value = example.dataset.mode;
+      let manualHint = '';
+      if (example.dataset.manualSeed === 'true') {
+        manualHint = selectManualSeedDocument()
+          ? ' Se seleccionó el manual inicial para este ejemplo.'
+          : ' El manual inicial no está disponible; se mantiene la búsqueda en todos los documentos.';
+      }
+      updateQueryModeUI(manualHint);
+      question.focus();
+    });
+  });
+
+  function setText(selector, value) {
+    document.querySelector(selector).textContent = value;
+  }
+
+  function addTextElement(parent, tag, value, className) {
+    const element = document.createElement(tag);
+    element.textContent = value;
+    if (className) element.className = className;
+    parent.appendChild(element);
+    return element;
+  }
+
+  function safeDetail(payload, fallback) {
+    return payload && typeof payload.detail === 'string' ? payload.detail : fallback;
+  }
+
+  async function readJson(response) {
+    try {
+      return await response.json();
+    } catch (_error) {
+      return null;
+    }
+  }
+
+  function addDefinition(list, label, value) {
+    addTextElement(list, 'dt', label);
+    addTextElement(list, 'dd', String(value ?? '—'));
+  }
+
+  function renderUploadSummary(payload) {
+    const summary = document.querySelector('#upload-summary');
+    summary.replaceChildren();
+    [
+      ['document_id', payload.document_id],
+      ['title', payload.title],
+      ['SHA-256', payload.sha256],
+      ['object_key', payload.object_key],
+      ['page_count', payload.page_count],
+      ['chunk_count', payload.chunk_count],
+      ['embedding_model', payload.embedding_model],
+      ['dimension', payload.dimension],
+      ['index_status', payload.index_status],
+      ['embedding_preview (6)', (payload.embedding_preview || []).slice(0, 6).join(', ')]
+    ].forEach(([label, value]) => addDefinition(summary, label, value));
+    setText('#stored-state', payload.object_key);
+    setText('#chunks-state', `${payload.chunk_count} fragmentos en ${payload.page_count} páginas.`);
+    setText('#indexed-state', `${payload.index_status}: ${payload.embedding_model}, ${payload.dimension} dimensiones.`);
+    const trace = document.querySelector('#upload-trace');
+    trace.replaceChildren();
+    (payload.trace || []).forEach((step) => addTextElement(trace, 'li', step));
+    document.querySelector('#upload-result').hidden = false;
+  }
+
+  function renderDocumentList(documents) {
+    const target = document.querySelector('#document-list');
+    parkDocumentDetails();
+    target.replaceChildren();
+    const currentSelection = documentSelect.value;
+    documentSelect.replaceChildren();
+    const allOption = document.createElement('option');
+    allOption.value = '';
+    allOption.textContent = 'Todos los documentos';
+    documentSelect.appendChild(allOption);
+    if (!documents.length) addTextElement(target, 'p', 'No hay documentos indexados.');
+    documents.forEach((documentItem) => {
+      const option = document.createElement('option');
+      option.value = documentItem.document_id;
+      option.textContent = `${documentItem.title} (${documentItem.document_id})`;
+      documentSelect.appendChild(option);
+      const article = document.createElement('article');
+      article.className = 'document-item';
+      article.dataset.documentId = documentItem.document_id;
+      addTextElement(article, 'strong', documentItem.title);
+      addTextElement(article, 'p', `${documentItem.document_id} · ${documentItem.pages} páginas · ${documentItem.chunk_count} fragmentos`);
+      addTextElement(article, 'p', `Estado: ${documentItem.status} · modelo: ${documentItem.model}`);
+      const toggle = addTextElement(article, 'button', 'Inspeccionar');
+      toggle.type = 'button';
+      toggle.setAttribute('aria-controls', 'document-details');
+      toggle.setAttribute('aria-expanded', 'false');
+      toggle.addEventListener('click', () => {
+        if (inspectedDocumentId === documentItem.document_id) {
+          hideDocumentDetails();
+        } else {
+          inspectDocument(documentItem.document_id);
+        }
+      });
+      target.appendChild(article);
+    });
+    if ([...documentSelect.options].some((option) => option.value === currentSelection)) {
+      documentSelect.value = currentSelection;
+    }
+  }
+
+  async function loadDocuments(selectedDocument) {
+    const requestGeneration = ++catalogRequestGeneration;
+    const documentsStatus = document.querySelector('#documents-status');
+    const documentsError = document.querySelector('#documents-error');
+    documentsStatus.textContent = 'Cargando documentos…';
+    documentsError.hidden = true;
+    try {
+      const response = await fetch('/api/documents');
+      const payload = await readJson(response);
+      if (requestGeneration !== catalogRequestGeneration) return false;
+      if (!response.ok) throw new Error(safeDetail(payload, 'No se pudo cargar la lista de documentos.'));
+      renderDocumentList(Array.isArray(payload) ? payload : []);
+      if (selectedDocument) documentSelect.value = selectedDocument;
+      documentsStatus.textContent = 'Lista de documentos actualizada.';
+      return true;
+    } catch (error) {
+      if (requestGeneration !== catalogRequestGeneration) return false;
+      documentsError.textContent = error instanceof Error ? error.message : 'No se pudo cargar la lista de documentos.';
+      documentsError.hidden = false;
+      documentsStatus.textContent = '';
+      return false;
+    }
+  }
+
+  function renderDocumentDetails(payload) {
+    const metadata = document.querySelector('#document-metadata');
+    metadata.replaceChildren();
+    const list = document.createElement('dl');
+    [['document_id', payload.document_id], ['title', payload.title], ['object_key', payload.object_key], ['sha', payload.sha], ['pages', payload.pages], ['chunk_count', payload.chunk_count], ['model', payload.model]].forEach(([label, value]) => addDefinition(list, label, value));
+    metadata.appendChild(list);
+    const pages = document.querySelector('#document-pages');
+    pages.replaceChildren();
+    let pageSection = null;
+    let renderedPage = null;
+    (payload.chunks || []).forEach((chunk) => {
+      if (chunk.page !== renderedPage) {
+        renderedPage = chunk.page;
+        pageSection = document.createElement('section');
+        addTextElement(pageSection, 'h4', `Página ${chunk.page}`);
+        pages.appendChild(pageSection);
+      }
+      const article = document.createElement('article');
+      article.className = 'chunk';
+      addTextElement(article, 'strong', `chunk_index: ${chunk.chunk_index}`);
+      addTextElement(article, 'p', `Sección: ${chunk.section}`);
+      addTextElement(article, 'p', chunk.content, 'excerpt');
+      addTextElement(article, 'p', `content_sha256: ${chunk.content_sha256}`);
+      addTextElement(article, 'p', `vector_dims: ${chunk.vector_dims} · embedding_preview: ${(chunk.embedding_preview || []).slice(0, 6).join(', ')}`);
+      pageSection.appendChild(article);
+    });
+    document.querySelector('#document-details').hidden = false;
+  }
+
+  function findDocumentArticle(documentId) {
+    return [...document.querySelector('#document-list').children]
+      .find((element) => element.dataset.documentId === documentId) || null;
+  }
+
+  function updateInspectToggles() {
+    document.querySelectorAll('.document-item > button[aria-controls="document-details"]').forEach((toggle) => {
+      const expanded = toggle.parentElement.dataset.documentId === inspectedDocumentId;
+      toggle.textContent = expanded ? 'Ocultar' : 'Inspeccionar';
+      toggle.setAttribute('aria-expanded', String(expanded));
+    });
+  }
+
+  function parkDocumentDetails() {
+    documentDetails.hidden = true;
+    documentDetailsHome.appendChild(documentDetails);
+    inspectedDocumentId = null;
+  }
+
+  function hideDocumentDetails() {
+    ++inspectRequestGeneration;
+    parkDocumentDetails();
+    updateInspectToggles();
+  }
+
+  async function inspectDocument(documentId) {
+    const requestGeneration = ++inspectRequestGeneration;
+    const inspectError = document.querySelector('#inspect-error');
+    inspectError.hidden = true;
+    documentDetails.hidden = true;
+    inspectedDocumentId = documentId;
+    const article = findDocumentArticle(documentId);
+    if (article) {
+      article.appendChild(documentDetails);
+    } else {
+      documentDetailsHome.appendChild(documentDetails);
+    }
+    updateInspectToggles();
+    try {
+      const response = await fetch(`/api/documents/${encodeURIComponent(documentId)}`);
+      const payload = await readJson(response);
+      if (requestGeneration !== inspectRequestGeneration) return false;
+      if (!response.ok) throw new Error(safeDetail(payload, 'No se pudo inspeccionar el documento.'));
+      renderDocumentDetails(payload);
+      documentSelect.value = documentId;
+      return true;
+    } catch (error) {
+      if (requestGeneration !== inspectRequestGeneration) return false;
+      inspectError.textContent = error instanceof Error ? error.message : 'No se pudo inspeccionar el documento.';
+      document.querySelector('#document-metadata').replaceChildren();
+      document.querySelector('#document-pages').replaceChildren();
+      inspectError.hidden = false;
+      document.querySelector('#document-details').hidden = false;
+      return false;
+    }
+  }
+
+  uploadForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    uploadError.hidden = true;
+    uploadStatus.textContent = '';
+    document.querySelector('#upload-result').hidden = true;
+    const file = document.querySelector('#pdf-file').files[0];
+    if (!file) return;
+    if (file.size > MAX_PDF_BYTES) {
+      uploadError.textContent = 'El PDF supera el límite de {{MAX_PDF_MIB}} MiB.';
+      uploadError.hidden = false;
+      return;
+    }
+    const looksLikePdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+    if (!looksLikePdf) {
+      uploadError.textContent = 'Seleccioná un archivo PDF.';
+      uploadError.hidden = false;
+      return;
+    }
+    uploadSubmit.disabled = true;
+    uploadStatus.textContent = 'Cargando, fragmentando e indexando…';
+    document.querySelector('#upload-progress').textContent = '';
+    try {
+      const response = await fetch('/api/documents', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/pdf',
+          'X-Document-Title': encodeURIComponent(file.name)
+        },
+        body: file
+      });
+      if (!response.ok) {
+        const payload = await readJson(response);
+        const fallbackByStatus = {
+          413: 'El PDF supera el límite de {{MAX_PDF_MIB}} MiB.',
+          422: 'El PDF no pudo ser procesado.',
+          429: 'Ya hay una carga en proceso; intentá nuevamente más tarde.',
+          503: 'La carga no está disponible temporalmente.'
+        };
+        throw new Error(safeDetail(payload, fallbackByStatus[response.status] || 'La carga no pudo completarse.'));
+      }
+      const result = await readUploadEventStream(response);
+      renderUploadSummary(result);
+      const catalogLoaded = await loadDocuments(result.document_id);
+      const documentInspected = await inspectDocument(result.document_id);
+      if (catalogLoaded && documentInspected) {
+        uploadStatus.textContent = 'Carga completada e indexada.';
+      } else if (!catalogLoaded && !documentInspected) {
+        uploadStatus.textContent = 'Carga completada e indexada, pero no se pudieron actualizar el catálogo ni la inspección.';
+      } else if (!catalogLoaded) {
+        uploadStatus.textContent = 'Carga completada e indexada, pero no se pudo actualizar el catálogo.';
+      } else {
+        uploadStatus.textContent = 'Carga completada e indexada, pero no se pudo completar la inspección.';
+      }
+    } catch (error) {
+      uploadError.textContent = error instanceof Error ? error.message : 'La carga no pudo completarse.';
+      uploadError.hidden = false;
+      uploadStatus.textContent = '';
+    } finally {
+      uploadSubmit.disabled = false;
+    }
+  });
+
+  // Lee la respuesta application/x-ndjson del servidor línea por línea: cada línea es
+  // un evento {"event": "progress"|"result"|"error", ...}. Actualiza la barra de
+  // progreso textual a medida que llegan eventos, en vez de esperar a que termine
+  // toda la carga, y devuelve el payload del evento "result" final.
+  async function readUploadEventStream(response) {
+    const progressText = document.querySelector('#upload-progress');
+    if (!response.body || !response.body.getReader) {
+      const payload = await readJson(response);
+      if (payload && payload.event === 'result') return payload;
+      throw new Error('La carga no pudo completarse.');
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let result = null;
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let newlineIndex = buffer.indexOf('\n');
+      while (newlineIndex >= 0) {
+        const line = buffer.slice(0, newlineIndex).trim();
+        buffer = buffer.slice(newlineIndex + 1);
+        newlineIndex = buffer.indexOf('\n');
+        if (!line) continue;
+        let event;
+        try {
+          event = JSON.parse(line);
+        } catch (_error) {
+          throw new Error('La carga no pudo completarse.');
+        }
+        if (event.event === 'progress') {
+          const label = UPLOAD_STAGE_LABELS[event.stage] || event.stage;
+          progressText.textContent = `Indexando fragmento ${event.done} de ${event.total} · ${label}…`;
+        } else if (event.event === 'result') {
+          result = event;
+        } else if (event.event === 'error') {
+          throw new Error(typeof event.detail === 'string' ? event.detail : 'La carga no pudo completarse.');
+        }
+      }
+    }
+    if (!result) throw new Error('La carga no pudo completarse.');
+    progressText.textContent = `Fragmentos indexados: ${result.chunk_count} de ${result.chunk_count}.`;
+    return result;
+  }
+
+  function updateDocumentFilter() {
+    const textToSql = mode.value === 'text-to-sql';
+    documentSelect.disabled = textToSql;
+    documentSelect.setAttribute('aria-disabled', String(textToSql));
+    const topK = document.querySelector('#top-k');
+    topK.disabled = textToSql;
+    topK.setAttribute('aria-disabled', String(textToSql));
+  }
+
+  function selectManualSeedDocument() {
+    const manualSeedAvailable = [...documentSelect.options].some(
+      (option) => option.value === MANUAL_SEED_DOCUMENT_ID
+    );
+    if (manualSeedAvailable) {
+      documentSelect.value = MANUAL_SEED_DOCUMENT_ID;
+    } else {
+      documentSelect.value = '';
+    }
+    return manualSeedAvailable;
+  }
+
+  function updateQueryModeUI(extraHint = '') {
+    updateDocumentFilter();
+    modeGuide.textContent = `${MODE_GUIDES[mode.value]}${MODE_COST_NOTE}${extraHint}`;
+  }
+
+  mode.addEventListener('change', () => updateQueryModeUI());
+
+  function renderSources(sources) {
+    const target = document.querySelector('#sources');
+    target.replaceChildren();
+    if (!sources.length) {
+      addTextElement(target, 'p', 'No se recuperaron fuentes para esta respuesta.');
+      return;
+    }
+    sources.forEach((source) => {
+      const article = document.createElement('article');
+      article.className = 'source';
+      if (source.type === 'manual') {
+        addTextElement(article, 'strong', `${source.document_id} · versión ${source.version} · página ${source.page} · fragmento ${source.chunk_index}`);
+        addTextElement(article, 'p', `Sección: ${source.section} · objeto: ${source.object_key}`);
+        addTextElement(article, 'p', `Distancia coseno: ${source.cosine_distance}`);
+        addTextElement(article, 'p', source.content, 'excerpt');
+      } else {
+        addTextElement(article, 'strong', 'Fuente de telemetría');
+        addTextElement(article, 'p', `Rol: ${source.role} · filas: ${source.row_count}${source.truncated ? ' (recortado a 50)' : ''} · columnas: ${(source.columns || []).join(', ')}`);
+      }
+      target.appendChild(article);
+    });
+  }
+
+  function renderResponse(payload) {
+    setText('#answer', payload.answer);
+    const sqlBlock = document.querySelector('#sql-block');
+    sqlBlock.hidden = !payload.sql;
+    setText('#sql', payload.sql || '');
+    const rowsBlock = document.querySelector('#rows-block');
+    rowsBlock.hidden = !payload.rows.length;
+    setText('#rows', payload.rows.length ? JSON.stringify(payload.rows, null, 2) : '');
+    const trace = document.querySelector('#trace');
+    trace.replaceChildren();
+    payload.trace.forEach((step) => addTextElement(trace, 'li', step));
+    renderSources(payload.sources);
+    results.hidden = false;
+  }
+
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    submit.disabled = true;
+    status.textContent = 'Consultando…';
+    errorBox.hidden = true;
+    results.hidden = true;
+    try {
+      const selectedDocument = documentSelect.value;
+      const queryMode = mode.value;
+      const requestBody = {
+        mode: queryMode,
+        question: question.value,
+        top_k: Number(document.querySelector('#top-k').value)
+      };
+      if (queryMode !== 'text-to-sql' && selectedDocument) {
+        requestBody.document_id = selectedDocument;
+      }
+      const response = await fetch('/api/query', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestBody)
+      });
+      const payload = await readJson(response);
+      if (!response.ok) throw new Error(safeDetail(payload, 'La consulta no pudo completarse.'));
+      renderResponse(payload);
+      status.textContent = 'Consulta completada.';
+    } catch (error) {
+      errorBox.textContent = error instanceof Error ? error.message : 'La consulta no pudo completarse.';
+      errorBox.hidden = false;
+      status.textContent = '';
+    } finally {
+      submit.disabled = false;
+    }
+  });
+
+  updateQueryModeUI();
+  loadDocuments();
+</script>
+</body>
+</html>

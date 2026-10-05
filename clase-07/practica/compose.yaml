@@ -1,0 +1,296 @@
+name: ceiot-clase-07
+
+services:
+  postgres:
+    image: timescale/timescaledb-ha:pg17.11-ts2.30.1
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-ceiot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ceiot_local_only}
+      POSTGRES_DB: ${POSTGRES_DB:-ceiot_class7}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5437}:5432"
+    volumes:
+      - postgres_data:/home/postgres/pgdata/data
+      - ./postgres/init/01-extensions.sql:/docker-entrypoint-initdb.d/01-extensions.sql:ro
+      - ./postgres/init/02-schema.sql:/docker-entrypoint-initdb.d/02-schema.sql:ro
+      - ./postgres/init/03-vector.sql:/docker-entrypoint-initdb.d/03-vector.sql:ro
+      - ./postgres/init/04-ai-views.sql:/docker-entrypoint-initdb.d/04-ai-views.sql:ro
+      - ./postgres/init/05-document-upload.sql:/docker-entrypoint-initdb.d/05-document-upload.sql:ro
+      - ./postgres/init/06-ai-open-access.sql:/docker-entrypoint-initdb.d/06-ai-open-access.sql:ro
+      # Scripts accesibles desde el contenedor: psql -f /lab/seed/... o /lab/examples/...
+      - ./postgres/seed:/lab/seed:ro
+      - ./postgres/examples:/lab/examples:ro
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}" &&
+          psql -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}" -tAc
+          "SELECT count(*) = 3 FROM pg_extension
+          WHERE extname IN ('timescaledb', 'postgis', 'vector')"
+          | grep -qx t
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    restart: unless-stopped
+
+  redis:
+    image: redis:7.4.2-alpine
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-ceiot_redis_local_only}
+    command:
+      - sh
+      - -c
+      - exec redis-server --appendonly yes --requirepass "$${REDIS_PASSWORD}"
+    ports:
+      - "127.0.0.1:${REDIS_PORT:-6380}:6379"
+    volumes:
+      - redis_data:/data
+      # Permite ejecutar `sh /lab/examples/03-redis.sh` dentro del contenedor.
+      - ./examples:/lab/examples:ro
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - REDISCLI_AUTH="$${REDIS_PASSWORD}" redis-cli ping | grep -qx PONG
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  loader:
+    image: ceiot-clase-07-python:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+    profiles:
+      - tools
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: ${POSTGRES_USER:-ceiot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ceiot_local_only}
+      POSTGRES_DB: ${POSTGRES_DB:-ceiot_class7}
+      # Credencial fija sólo para esta demo local.
+      # No reutilizar en producción.
+      AI_POSTGRES_USER: ai_readonly
+      AI_POSTGRES_PASSWORD: ceiot_ai_readonly_local_only
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-ceiot_redis_local_only}
+      REDIS_TTL_SECONDS: ${REDIS_TTL_SECONDS:-3600}
+      SEAWEEDFS_S3_ENDPOINT: http://seaweedfs:8333
+      MANUAL_BUCKET: ${MANUAL_BUCKET:-ceiot-manuales}
+      MODELO_EMBEDDING: ${MODELO_EMBEDDING:-BAAI/bge-m3}
+      EMBEDDING_BATCH_SIZE: ${EMBEDDING_BATCH_SIZE:-4}
+      RAG_MAX_COSINE_DISTANCE: ${RAG_MAX_COSINE_DISTANCE:-0.55}
+      RAG_MAX_TOP_K: ${RAG_MAX_TOP_K:-4}
+      HF_HOME: /models/huggingface
+    volumes:
+      - ./data/manual-content.json:/data/manual-content.json:ro
+      - ./compose.yaml:/app/compose.yaml:ro
+      - ./.env.example:/app/.env.example:ro
+      - ./tests:/app/tests:ro
+      - ./postgres/examples:/app/postgres/examples:ro
+      - ./examples:/app/examples:ro
+      - embedding_model_cache:/models/huggingface
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      seaweedfs:
+        condition: service_healthy
+    restart: "no"
+
+  uploader:
+    image: ceiot-clase-07-python:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+    entrypoint:
+      - uvicorn
+    command:
+      - loader.upload_api:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8007"
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: ${POSTGRES_DB:-ceiot_class7}
+      # Credencial fija sólo para esta demo local.
+      # No reutilizar en producción.
+      RAG_INGEST_POSTGRES_PASSWORD: ceiot_rag_ingest_demo_only
+      SEAWEEDFS_S3_ENDPOINT: http://seaweedfs:8333
+      MANUAL_BUCKET: ${MANUAL_BUCKET:-ceiot-manuales}
+      MODELO_EMBEDDING: ${MODELO_EMBEDDING:-BAAI/bge-m3}
+      EMBEDDING_BATCH_SIZE: ${EMBEDDING_BATCH_SIZE:-4}
+      CHUNK_MAX_CHARS: ${CHUNK_MAX_CHARS:-1200}
+      CHUNK_OVERLAP_CHARS: ${CHUNK_OVERLAP_CHARS:-150}
+      MAX_PDF_MIB: ${MAX_PDF_MIB:-50}
+      HF_HOME: /models/huggingface
+      # Debe coincidir con `cpus` (misma variable, por eso es un entero). Sin
+      # este tope PyTorch lanza un hilo por núcleo del host: medido con 10 hilos
+      # sobre 2 CPU, ~3 s por fragmento y memoria creciente entre cargas; con
+      # 2 hilos, ~1,2 s y memoria estable.
+      OMP_NUM_THREADS: "${UPLOADER_CPUS:-2}"
+    volumes:
+      - embedding_model_cache:/models/huggingface
+    expose:
+      - "8007"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      seaweedfs:
+        condition: service_healthy
+    mem_limit: ${UPLOADER_MEM_LIMIT:-4g}
+    cpus: "${UPLOADER_CPUS:-2}"
+    pids_limit: 256
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request as u;
+          u.urlopen('http://127.0.0.1:8007/health', timeout=2).read()
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    restart: unless-stopped
+
+  app:
+    image: ceiot-clase-07-python:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+    entrypoint:
+      - uvicorn
+    command:
+      - api.web_app:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8006"
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: ${POSTGRES_DB:-ceiot_class7}
+      RAG_POSTGRES_USER: rag_readonly
+      RAG_POSTGRES_PASSWORD: ceiot_rag_readonly_demo_only
+      AI_POSTGRES_USER: ai_readonly
+      AI_POSTGRES_PASSWORD: ceiot_ai_readonly_local_only
+      MODELO_EMBEDDING: ${MODELO_EMBEDDING:-BAAI/bge-m3}
+      RAG_MAX_COSINE_DISTANCE: ${RAG_MAX_COSINE_DISTANCE:-0.55}
+      RAG_MAX_TOP_K: ${RAG_MAX_TOP_K:-4}
+      MAX_PDF_MIB: ${MAX_PDF_MIB:-50}
+      CHUNK_MAX_CHARS: ${CHUNK_MAX_CHARS:-1200}
+      CHUNK_OVERLAP_CHARS: ${CHUNK_OVERLAP_CHARS:-150}
+      HF_HOME: /models/huggingface
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-openai/gpt-4o-mini}
+      OPENROUTER_MAX_COMPLETION_TOKENS: ${OPENROUTER_MAX_COMPLETION_TOKENS:-300}
+    volumes:
+      - embedding_model_cache:/models/huggingface
+    ports:
+      - "127.0.0.1:${APP_PORT:-8007}:8006"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      uploader:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request as u;
+          u.urlopen('http://127.0.0.1:8006/health', timeout=2).read()
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    restart: unless-stopped
+
+  seaweedfs:
+    image: chrislusf/seaweedfs:3.80
+    # Laboratorio local de un solo nodo: sin TLS, alta disponibilidad ni
+    # autenticación S3. No exponer este puerto fuera de 127.0.0.1 ni usarlo
+    # como configuración de producción.
+    command:
+      - server
+      - -dir=/data
+      - -ip=seaweedfs
+      - -ip.bind=0.0.0.0
+      - -master.port=9333
+      - -volume.port=8080
+      - -s3
+      - -s3.port=8333
+    ports:
+      - "127.0.0.1:${SEAWEEDFS_S3_PORT:-18334}:8333"
+      # Interfaces web para explorar el laboratorio: filer (navegador de
+      # archivos y buckets) y master (estado del clúster).
+      - "127.0.0.1:${SEAWEEDFS_FILER_PORT:-18889}:8888"
+      - "127.0.0.1:${SEAWEEDFS_MASTER_PORT:-19334}:9333"
+    volumes:
+      - seaweedfs_data:/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - wget -q -O /dev/null http://127.0.0.1:9333/cluster/status
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-student@example.edu}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-class7-local}
+      # "Shared Storage" agrega estas carpetas al diálogo "Open File" del Query
+      # Tool. Se montan fuera de /var/lib/pgadmin/storage: un montaje dentro de
+      # esa ruta la deja con dueño root y pgAdmin no arranca.
+      PGADMIN_CONFIG_SHARED_STORAGE: >-
+        [{"name": "examples", "path": "/lab/examples", "restricted_access": True},
+        {"name": "seed", "path": "/lab/seed", "restricted_access": True}]
+    ports:
+      - "127.0.0.1:${PGADMIN_PORT:-5057}:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+      - ./postgres/examples:/lab/examples:ro
+      - ./postgres/seed:/lab/seed:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  redisinsight:
+    image: redis/redisinsight:latest
+    environment:
+      # Registra la conexión a Redis automáticamente al abrir la interfaz.
+      RI_REDIS_ALIAS: ceiot-clase-07
+      RI_REDIS_HOST: redis
+      RI_REDIS_PORT: "6379"
+      RI_REDIS_PASSWORD: ${REDIS_PASSWORD:-ceiot_redis_local_only}
+    ports:
+      - "127.0.0.1:${REDISINSIGHT_PORT:-5541}:5540"
+    volumes:
+      - redisinsight_data:/data
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+  seaweedfs_data:
+  embedding_model_cache:
+  pgadmin_data:
+  redisinsight_data:
