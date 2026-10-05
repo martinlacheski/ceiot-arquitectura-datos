@@ -11,7 +11,7 @@ import psycopg  # type: ignore[import-not-found]
 from shared.document_limits import MAX_CHUNK_CHARS  # type: ignore[import-not-found]
 from shared.embeddings import EXPECTED_DIMENSION  # type: ignore[import-not-found]
 from shared.rag_connection import (  # type: ignore[import-not-found]
-    rag_connection_settings,
+    tenant_cursor,
     validate_document_id,
 )
 
@@ -72,14 +72,11 @@ def _embedding_preview(raw_vector: Any, vector_dims: Any) -> list[float]:
     return preview
 
 
-def list_documents() -> list[dict[str, Any]]:
-    """List at most 100 documents whose object and vector index are available."""
+def list_documents(organization_id: int) -> list[dict[str, Any]]:
+    """List at most 100 documents of one organization (RLS filters the rest)."""
 
     try:
-        with (
-            psycopg.connect(**rag_connection_settings()) as connection,
-            connection.cursor() as cursor,
-        ):
+        with tenant_cursor(organization_id) as cursor:
             cursor.execute(
                 """
                 SELECT document_id,
@@ -105,15 +102,16 @@ def list_documents() -> list[dict[str, Any]]:
         raise CatalogUnavailable() from error
 
 
-def document_details(document_id: str) -> dict[str, Any] | None:
-    """Return one indexed document and at most 120 ordered, bounded chunks."""
+def document_details(document_id: str, organization_id: int) -> dict[str, Any] | None:
+    """Return one indexed document of the organization and at most 120 chunks.
+
+    A document that belongs to another organization is invisible under RLS, so
+    it comes back as ``None`` exactly like one that does not exist.
+    """
 
     selected_id = validate_document_id(document_id)
     try:
-        with (
-            psycopg.connect(**rag_connection_settings()) as connection,
-            connection.cursor() as cursor,
-        ):
+        with tenant_cursor(organization_id) as cursor:
             cursor.execute(
                 """
                 SELECT document_id, version,

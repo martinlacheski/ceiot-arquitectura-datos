@@ -1,6 +1,7 @@
 \set ON_ERROR_STOP on
 
 CREATE TABLE IF NOT EXISTS manual_chunks (
+    organization_id bigint NOT NULL REFERENCES organizations (organization_id),
     document_id text NOT NULL,
     version integer NOT NULL CHECK (version > 0),
     chunk_index integer NOT NULL CHECK (chunk_index >= 0),
@@ -16,6 +17,11 @@ CREATE TABLE IF NOT EXISTS manual_chunks (
     CONSTRAINT manual_chunks_document_fk
         FOREIGN KEY (document_id, version)
         REFERENCES manual_documents (document_id, version),
+    -- Integridad entre tenants: un fragmento sólo puede colgar de un documento
+    -- de su propia organización.
+    CONSTRAINT manual_chunks_tenant_document_fk
+        FOREIGN KEY (organization_id, document_id, version)
+        REFERENCES manual_documents (organization_id, document_id, version),
     CONSTRAINT manual_chunks_object_fk
         FOREIGN KEY (object_key)
         REFERENCES manual_documents (object_key),

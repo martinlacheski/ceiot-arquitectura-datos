@@ -15,6 +15,11 @@ from pypdf import PdfReader  # type: ignore[import-not-found]
 # that enforces it). Page count, per-page/total extracted characters and chunk
 # count are unbounded: chunks scale with the document. Values come from the
 # environment (see shared/document_limits.py).
+from shared.document_identity import (
+    checked_organization_id,
+    derive_document_id,
+    object_key_for,
+)
 from shared.document_limits import (
     CHUNK_OVERLAP_CHARS,
     MAX_CHUNK_CHARS,
@@ -151,8 +156,15 @@ def _chunks_from_pages(
     return tuple(chunks)
 
 
-def parse_document(pdf_bytes: bytes, title: str, content_type: str) -> ParsedDocument:
-    """Validate, extract and chunk one PDF without storage or model side effects."""
+def parse_document(
+    pdf_bytes: bytes, title: str, content_type: str, organization_id: int
+) -> ParsedDocument:
+    """Validate, extract and chunk one PDF without storage or model side effects.
+
+    La identidad del documento depende del contenido y de la organización dueña.
+    """
+
+    organization_id = checked_organization_id(organization_id)
 
     declared_mime = content_type.partition(";")[0].strip().lower()
     if declared_mime != "application/pdf":
@@ -196,8 +208,8 @@ def parse_document(pdf_bytes: bytes, title: str, content_type: str) -> ParsedDoc
         )
 
     sha256 = hashlib.sha256(pdf_bytes).hexdigest()
-    document_id = f"upload-{sha256[:24]}"
-    object_key = f"uploads/{document_id}/v1/{sha256}.pdf"
+    document_id = derive_document_id(organization_id, sha256)
+    object_key = object_key_for(organization_id, document_id, sha256)
     chunks = _chunks_from_pages(page_texts, document_id, object_key)
     if not chunks:
         raise PDFRejected(

@@ -71,12 +71,20 @@ CREATE INDEX IF NOT EXISTS measurements_device_time_idx
 CREATE INDEX IF NOT EXISTS measurements_org_device_time_idx
     ON measurements (organization_id, device_id, measured_at DESC);
 
+-- Los PDF también pertenecen a una organización. El document_id se deriva del
+-- contenido Y de la organización (ver shared/document_identity.py), así que es
+-- único en toda la base; aun así la organización va en la clave objetivo de las
+-- claves foráneas compuestas, igual que en devices, para que un fragmento no
+-- pueda apuntar al documento de otro tenant. object_key lleva el prefijo
+-- uploads/org-<id>/ y por eso nunca se comparte entre organizaciones.
 CREATE TABLE IF NOT EXISTS manual_documents (
+    organization_id bigint NOT NULL REFERENCES organizations (organization_id),
     document_id text NOT NULL,
     version integer NOT NULL CHECK (version > 0),
     title text NOT NULL,
     object_key text NOT NULL UNIQUE,
     content_type text NOT NULL,
     storage_status text NOT NULL CHECK (storage_status IN ('pending_upload', 'available')),
-    PRIMARY KEY (document_id, version)
+    PRIMARY KEY (document_id, version),
+    UNIQUE (organization_id, document_id, version)
 );

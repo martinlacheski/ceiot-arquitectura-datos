@@ -8,6 +8,8 @@ import pytest  # type: ignore[import-not-found]
 from pypdf import PdfReader, PdfWriter  # type: ignore[import-not-found]
 from reportlab.pdfgen import canvas  # type: ignore[import-not-found]
 
+from shared.document_identity import derive_document_id  # type: ignore[import-not-found]
+
 import loader.pdf_document as pdf_document  # type: ignore[import-not-found]
 from loader.pdf_document import (  # type: ignore[import-not-found]
     PDFRejected,
@@ -56,12 +58,13 @@ def test_parse_valid_document_preserves_page_provenance_overlap_and_identity() -
     long_page = " ".join(f"termino{i:04d}" for i in range(260))
     pdf_bytes = _pdf_bytes(long_page, "Segunda página con texto útil y procedencia propia.")
 
-    parsed = parse_document(pdf_bytes, " ../Informe\\final\n2026 ", "application/pdf")
+    parsed = parse_document(pdf_bytes, " ../Informe\\final\n2026 ", "application/pdf", 1)
 
-    assert parsed.document_id == f"upload-{parsed.sha256[:24]}"
+    # La identidad depende del contenido y de la organización (ver shared/document_identity.py).
+    assert parsed.document_id == derive_document_id(1, parsed.sha256)
     assert parsed.version == 1
     assert parsed.object_key == (
-        f"uploads/{parsed.document_id}/v1/{parsed.sha256}.pdf"
+        f"uploads/org-1/{parsed.document_id}/v1/{parsed.sha256}.pdf"
     )
     assert parsed.byte_count == len(pdf_bytes)
     assert parsed.page_count == 2
@@ -103,9 +106,9 @@ def test_identical_bytes_keep_id_and_different_bytes_change_it() -> None:
     original = _pdf_bytes("Texto original suficientemente significativo para indexar.")
     modified = _pdf_bytes("Texto modificado suficientemente significativo para indexar.")
 
-    first = parse_document(original, "Título uno", "application/pdf")
-    repeated = parse_document(original, "Otro título", "application/pdf; charset=binary")
-    changed = parse_document(modified, "Título uno", "APPLICATION/PDF")
+    first = parse_document(original, "Título uno", "application/pdf", 1)
+    repeated = parse_document(original, "Otro título", "application/pdf; charset=binary", 1)
+    changed = parse_document(modified, "Título uno", "APPLICATION/PDF", 1)
 
     assert first.document_id == repeated.document_id
     assert first.sha256 == repeated.sha256
@@ -122,6 +125,7 @@ def test_title_is_metadata_only_and_bounded() -> None:
         _pdf_bytes("Texto suficiente para validar un título muy extenso."),
         "/ruta\\privada/" + "x" * 300,
         "application/pdf",
+        1,
     )
 
     assert len(parsed.title) == pdf_document.MAX_TITLE_CHARS
@@ -140,7 +144,7 @@ def test_title_is_metadata_only_and_bounded() -> None:
 def test_rejects_wrong_mime_magic_and_empty_payload(
     payload: bytes, content_type: str, reason: str
 ) -> None:
-    _assert_rejected(lambda: parse_document(payload, "Informe", content_type), reason)
+    _assert_rejected(lambda: parse_document(payload, "Informe", content_type, 1), reason)
 
 
 def test_rejects_more_than_50_mib_before_starting_parser(monkeypatch) -> None:
@@ -151,7 +155,7 @@ def test_rejects_more_than_50_mib_before_starting_parser(monkeypatch) -> None:
     oversized = b"%PDF" + b"x" * (pdf_document.MAX_PDF_BYTES - 3)
 
     _assert_rejected(
-        lambda: parse_document(oversized, "Informe", "application/pdf"),
+        lambda: parse_document(oversized, "Informe", "application/pdf", 1),
         "El PDF debe contener entre 1 byte y 50 MiB.",
     )
 
@@ -160,14 +164,14 @@ def test_rejects_blank_or_scanned_document_without_ocr() -> None:
     blank = _pdf_bytes("")
 
     _assert_rejected(
-        lambda: parse_document(blank, "Escaneo", "application/pdf"),
+        lambda: parse_document(blank, "Escaneo", "application/pdf", 1),
         "El PDF no contiene texto extraíble significativo; no se aplica OCR.",
     )
 
 
 def test_rejects_encrypted_document() -> None:
     _assert_rejected(
-        lambda: parse_document(_encrypted_pdf_bytes(), "Privado", "application/pdf"),
+        lambda: parse_document(_encrypted_pdf_bytes(), "Privado", "application/pdf", 1),
         "No se aceptan PDFs cifrados.",
     )
 
@@ -175,7 +179,7 @@ def test_rejects_encrypted_document() -> None:
 def test_accepts_more_than_20_pages_without_a_page_cap() -> None:
     pdf_bytes = _pdf_bytes(*(f"Texto significativo de la página {page}." for page in range(25)))
 
-    parsed = parse_document(pdf_bytes, "Extenso", "application/pdf")
+    parsed = parse_document(pdf_bytes, "Extenso", "application/pdf", 1)
 
     assert parsed.page_count == 25
     assert {chunk.page for chunk in parsed.chunks} == set(range(1, 26))
@@ -212,7 +216,7 @@ def test_wraps_lazy_page_access_error_with_safe_reason(monkeypatch) -> None:
     )
 
     with pytest.raises(PDFRejected) as captured:
-        parse_document(b"%PDF mock", "Informe", "application/pdf")
+        parse_document(b"%PDF mock", "Informe", "application/pdf", 1)
 
     assert str(captured.value) == "No se pudo extraer el texto del PDF."
     assert "SENTINEL" not in str(captured.value)
@@ -247,12 +251,12 @@ def test_page_fragments_terminate_for_long_unbroken_token() -> None:
 def test_accepts_page_and_total_text_beyond_former_limits(monkeypatch) -> None:
     long_page = _FakeReader([_FakePage("a" * 20_001)])
     monkeypatch.setattr(pdf_document, "PdfReader", lambda *args, **kwargs: long_page)
-    parsed = parse_document(b"%PDF mock", "Informe", "application/pdf")
+    parsed = parse_document(b"%PDF mock", "Informe", "application/pdf", 1)
     assert parsed.extracted_char_count == 20_001
 
     total_long = _FakeReader([_FakePage("palabra " * 2500) for _ in range(11)])
     monkeypatch.setattr(pdf_document, "PdfReader", lambda *args, **kwargs: total_long)
-    parsed = parse_document(b"%PDF mock", "Informe", "application/pdf")
+    parsed = parse_document(b"%PDF mock", "Informe", "application/pdf", 1)
     assert parsed.extracted_char_count > 200_000
 
 
@@ -262,7 +266,7 @@ def test_accepts_more_than_120_chunks(monkeypatch) -> None:
     )
     monkeypatch.setattr(pdf_document, "PdfReader", lambda *args, **kwargs: many_chunks)
 
-    parsed = parse_document(b"%PDF mock", "Informe", "application/pdf")
+    parsed = parse_document(b"%PDF mock", "Informe", "application/pdf", 1)
 
     assert len(parsed.chunks) > 120
 
@@ -273,7 +277,7 @@ def test_wraps_parser_and_extraction_errors_with_safe_reasons(monkeypatch) -> No
 
     monkeypatch.setattr(pdf_document, "PdfReader", broken_reader)
     _assert_rejected(
-        lambda: parse_document(b"%PDF mock", "Informe", "application/pdf"),
+        lambda: parse_document(b"%PDF mock", "Informe", "application/pdf", 1),
         "No se pudo interpretar el PDF.",
     )
 
@@ -287,6 +291,6 @@ def test_wraps_parser_and_extraction_errors_with_safe_reasons(monkeypatch) -> No
         lambda *args, **kwargs: _FakeReader([BrokenPage()]),
     )
     _assert_rejected(
-        lambda: parse_document(b"%PDF mock", "Informe", "application/pdf"),
+        lambda: parse_document(b"%PDF mock", "Informe", "application/pdf", 1),
         "No se pudo extraer el texto del PDF.",
     )

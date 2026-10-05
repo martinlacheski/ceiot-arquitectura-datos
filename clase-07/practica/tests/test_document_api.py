@@ -17,6 +17,7 @@ from api.web_app import upload_document  # type: ignore[import-not-found]
 from loader.pdf_document import MAX_PDF_BYTES  # type: ignore[import-not-found]
 from shared import document_catalog  # type: ignore[import-not-found]
 from shared.document_catalog import CatalogUnavailable  # type: ignore[import-not-found]
+from shared.document_identity import derive_document_id, object_key_for  # type: ignore[import-not-found]
 from shared.tenants import resolve_user  # type: ignore[import-not-found]
 
 ANA = resolve_user("ana")
@@ -24,12 +25,13 @@ ANA = resolve_user("ana")
 _HTTPX_ASYNC_CLIENT = httpx.AsyncClient
 PDF_BYTES = b"%PDF bounded public proxy"
 PDF_SHA256 = "54143acde2a0a647326a3faf759b32776512dfa62970e5830d1467cf24787fb4"
-DOCUMENT_ID = f"upload-{PDF_SHA256[:24]}"
+# La identidad depende del contenido y de la organización (Ana = organización 1).
+DOCUMENT_ID = derive_document_id(1, PDF_SHA256)
 SUMMARY = {
     "document_id": DOCUMENT_ID,
     "version": 1,
     "title": "Informe térmico ñ",
-    "object_key": f"uploads/{DOCUMENT_ID}/v1/{PDF_SHA256}.pdf",
+    "object_key": object_key_for(1, DOCUMENT_ID, PDF_SHA256),
     "sha256": PDF_SHA256,
     "byte_count": len(PDF_BYTES),
     "page_count": 2,
@@ -50,7 +52,10 @@ SUMMARY = {
 
 
 def _client() -> TestClient:
-    return TestClient(web_app.app)
+    client = TestClient(web_app.app)
+    # Todas las rutas de documentos exigen el usuario simulado (user_id).
+    client.params = {"user_id": "ana"}
+    return client
 
 
 def _ndjson_events(response: Any) -> list[dict[str, Any]]:
@@ -88,11 +93,13 @@ def test_catalog_routes_list_details_not_found_bad_id_and_sanitized_failure(
 ) -> None:
     summary = {"document_id": DOCUMENT_ID, "title": "Informe", "status": "indexed"}
     details = {**summary, "chunks": []}
-    monkeypatch.setattr(document_catalog, "list_documents", lambda: [summary])
+    monkeypatch.setattr(document_catalog, "list_documents", lambda organization_id: [summary])
     monkeypatch.setattr(
         document_catalog,
         "document_details",
-        lambda document_id: details if document_id == DOCUMENT_ID else None,
+        lambda document_id, organization_id: (
+            details if document_id == DOCUMENT_ID and organization_id == 1 else None
+        ),
     )
     client = _client()
 
@@ -101,7 +108,7 @@ def test_catalog_routes_list_details_not_found_bad_id_and_sanitized_failure(
     assert client.get("/api/documents/upload-aaaaaaaaaaaaaaaaaaaaaaaa").status_code == 404
     assert client.get("/api/documents/not-valid").status_code == 422
 
-    def unavailable() -> list[dict[str, Any]]:
+    def unavailable(organization_id: int) -> list[dict[str, Any]]:
         raise CatalogUnavailable()
 
     monkeypatch.setattr(document_catalog, "list_documents", unavailable)
@@ -271,12 +278,13 @@ def test_public_upload_rejects_mime_length_stream_and_title_before_proxy(
             "type": "http",
             "method": "POST",
             "path": "/api/documents",
+            "query_string": b"user_id=ana",
             "headers": [(b"content-type", b"application/pdf")],
         },
         chunked_body,
     )
     with pytest.raises(HTTPException) as captured:
-        asyncio.run(upload_document(request, None))
+        asyncio.run(upload_document(request, "ana", None))
     assert captured.value.status_code == 413
 
 

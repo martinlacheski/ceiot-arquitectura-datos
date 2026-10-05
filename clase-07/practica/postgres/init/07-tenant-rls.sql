@@ -27,7 +27,10 @@ DO $policies$
 DECLARE
     tabla text;
 BEGIN
-    FOREACH tabla IN ARRAY ARRAY['organizations', 'locations', 'devices', 'measurements']
+    FOREACH tabla IN ARRAY ARRAY[
+        'organizations', 'locations', 'devices', 'measurements',
+        'manual_documents', 'manual_chunks'
+    ]
     LOOP
         EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', tabla);
         EXECUTE format('ALTER TABLE public.%I FORCE ROW LEVEL SECURITY', tabla);

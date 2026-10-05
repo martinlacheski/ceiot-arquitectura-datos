@@ -19,7 +19,7 @@ def test_upload_controls_and_limits_are_explicit_and_accessible() -> None:
     assert "Sin límite de páginas" in html
     assert "segundos por fragmento" in html
     assert "sólo texto extraíble" in html and "OCR" in html and "cifrados" in html
-    assert "fetch('/api/documents'" in html
+    assert "fetch(`/api/documents?user_id=" in html
     assert "body: file" in html
     assert "'Content-Type': 'application/pdf'" in html
     assert "'X-Document-Title': encodeURIComponent(file.name)" in html

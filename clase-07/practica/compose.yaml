@@ -43,7 +43,17 @@ services:
     command:
       - sh
       - -c
-      - exec redis-server --appendonly yes --requirepass "$${REDIS_PASSWORD}"
+      # Un usuario ACL por organización (slide 30: namespaces por tenant). Cada
+      # uno ve sólo las claves de su prefijo y sólo puede leerlas (GET/TTL/EXISTS):
+      # -@all quita todos los comandos y ~patrón limita las claves. KEYS y SCAN no
+      # se habilitan a propósito: no filtran por patrón de clave y listarían los
+      # nombres de las demás organizaciones. El usuario "default" (contraseña
+      # REDIS_PASSWORD) sigue siendo el administrador: lo usan el loader y
+      # RedisInsight. Contraseñas fijas sólo para esta demo local.
+      - >-
+        exec redis-server --appendonly yes --requirepass "$${REDIS_PASSWORD}"
+        --user tenant_1 on '>ceiot_redis_tenant1_local_only' '~iot:org-1:*' -@all +get +ttl +exists
+        --user tenant_2 on '>ceiot_redis_tenant2_local_only' '~iot:org-2:*' -@all +get +ttl +exists
     ports:
       - "127.0.0.1:${REDIS_PORT:-6380}:6379"
     volumes:
@@ -76,6 +86,9 @@ services:
       # No reutilizar en producción.
       AI_POSTGRES_USER: ai_readonly
       AI_POSTGRES_PASSWORD: ceiot_ai_readonly_local_only
+      # Las pruebas con base real consultan como rag_readonly (RLS por tenant).
+      RAG_POSTGRES_USER: rag_readonly
+      RAG_POSTGRES_PASSWORD: ceiot_rag_readonly_demo_only
       REDIS_HOST: redis
       REDIS_PORT: "6379"
       REDIS_PASSWORD: ${REDIS_PASSWORD:-ceiot_redis_local_only}

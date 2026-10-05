@@ -46,7 +46,9 @@ SUMMARY = {
 
 
 def _client() -> TestClient:
-    return TestClient(upload_api.app)
+    # La API pública ya tradujo el usuario a su organización: el salto interno la
+    # recibe en X-Organization-Id (ver tests/test_tenant_documents.py).
+    return TestClient(upload_api.app, headers={"X-Organization-Id": "1"})
 
 
 def _ndjson_events(response: Any) -> list[dict[str, Any]]:
@@ -101,7 +103,7 @@ def _patch_parse_document(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         upload_api,
         "parse_document",
-        lambda pdf_bytes, title, content_type: _fake_document(title),
+        lambda pdf_bytes, title, content_type, organization_id: _fake_document(title),
     )
 
 
@@ -160,7 +162,7 @@ def test_rejects_wrong_mime_before_read_or_ingest(
         unread_body,
     )
     with pytest.raises(HTTPException) as captured:
-        asyncio.run(upload_api.upload_document(request, None))
+        asyncio.run(upload_api.upload_document(request, None, "1"))
     assert captured.value.status_code == 415
     assert receive_calls == 0
 
@@ -194,7 +196,7 @@ def test_content_length_oversize_is_rejected_before_body_read_or_ingest(
     )
 
     with pytest.raises(HTTPException) as captured:
-        asyncio.run(upload_api.upload_document(request, None))
+        asyncio.run(upload_api.upload_document(request, None, "1"))
 
     assert captured.value.status_code == 413
     assert captured.value.detail == "El PDF supera el límite de 50 MiB."
@@ -233,7 +235,7 @@ def test_streaming_limit_rejects_oversize_without_calling_ingest(
     )
 
     with pytest.raises(HTTPException) as captured:
-        asyncio.run(upload_api.upload_document(request, None))
+        asyncio.run(upload_api.upload_document(request, None, "1"))
 
     assert captured.value.status_code == 413
 
@@ -263,7 +265,10 @@ def test_success_streams_progress_then_a_final_result_event(
     _patch_parse_document(monkeypatch)
     observed: list[tuple[bytes, str]] = []
 
-    def stream(document: ParsedDocument, pdf_bytes: bytes) -> Iterator[dict[str, Any]]:
+    def stream(
+        document: ParsedDocument, pdf_bytes: bytes, organization_id: int
+    ) -> Iterator[dict[str, Any]]:
+        assert organization_id == 1
         observed.append((pdf_bytes, document.title))
         yield {"event": "progress", "stage": "pdf_validated", "done": 0, "total": 3}
         yield {"event": "progress", "stage": "chunks_embedded", "done": 3, "total": 3}
@@ -296,7 +301,9 @@ def test_title_header_is_optional_unicode_decoded_and_raw_ascii_compatible(
     _patch_parse_document(monkeypatch)
     observed_titles: list[str] = []
 
-    def stream(document: ParsedDocument, _pdf_bytes: bytes) -> Iterator[dict[str, Any]]:
+    def stream(
+        document: ParsedDocument, _pdf_bytes: bytes, _organization_id: int
+    ) -> Iterator[dict[str, Any]]:
         observed_titles.append(document.title)
         yield {"event": "result", **SUMMARY}
 

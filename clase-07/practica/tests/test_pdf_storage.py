@@ -14,6 +14,7 @@ from loader.pdf_document import (  # type: ignore[import-not-found]
     PageChunk,
     ParsedDocument,
 )
+from shared.document_identity import derive_document_id, object_key_for  # type: ignore[import-not-found]
 from shared.embeddings import EXPECTED_DIMENSION, MODEL_NAME  # type: ignore[import-not-found]
 
 
@@ -22,8 +23,8 @@ PDF_BYTES = b"%PDF synthetic storage test"
 
 def _document(pdf_bytes: bytes = PDF_BYTES) -> ParsedDocument:
     digest = hashlib.sha256(pdf_bytes).hexdigest()
-    document_id = f"upload-{digest[:24]}"
-    object_key = f"uploads/{document_id}/v1/{digest}.pdf"
+    document_id = derive_document_id(1, digest)
+    object_key = object_key_for(1, document_id, digest)
     chunks = tuple(
         PageChunk(
             document_id=document_id,
@@ -211,7 +212,7 @@ def test_ingest_returns_safe_summary_and_orders_verified_s3_before_database(
     connection = _Connection(events)
     _install_dependencies(monkeypatch, document, model, s3, connection)
 
-    result = pdf_storage.ingest_document(PDF_BYTES, "Informe", "application/pdf")
+    result = pdf_storage.ingest_document(PDF_BYTES, "Informe", "application/pdf", 1)
 
     assert events == [
         "embed",
@@ -263,7 +264,7 @@ def test_database_failure_rolls_back_but_keeps_retryable_s3_object(
     _install_dependencies(monkeypatch, document, model, s3, connection)
 
     with pytest.raises(pdf_storage.UploadUnavailable) as captured:
-        pdf_storage.ingest_document(PDF_BYTES, "Informe", "application/pdf")
+        pdf_storage.ingest_document(PDF_BYTES, "Informe", "application/pdf", 1)
 
     assert str(captured.value) == "La carga no está disponible temporalmente."
     assert "SENTINEL" not in str(captured.value)
@@ -291,7 +292,7 @@ def test_finalization_failure_restores_original_chunks_and_keeps_s3_object(
     _install_dependencies(monkeypatch, document, model, s3, connection)
 
     with pytest.raises(pdf_storage.UploadUnavailable):
-        pdf_storage.ingest_document(PDF_BYTES, "Informe", "application/pdf")
+        pdf_storage.ingest_document(PDF_BYTES, "Informe", "application/pdf", 1)
 
     inserted_keys = {
         (params[0], params[1], params[2])
@@ -318,8 +319,8 @@ def test_retry_replaces_exact_version_without_duplicate_chunks(
     connection = _Connection(events)
     _install_dependencies(monkeypatch, document, model, s3, connection)
 
-    first = pdf_storage.ingest_document(PDF_BYTES, "Informe", "application/pdf")
-    second = pdf_storage.ingest_document(PDF_BYTES, "Informe", "application/pdf")
+    first = pdf_storage.ingest_document(PDF_BYTES, "Informe", "application/pdf", 1)
+    second = pdf_storage.ingest_document(PDF_BYTES, "Informe", "application/pdf", 1)
 
     assert first["document_id"] == second["document_id"]
     assert connection.commits == 2
@@ -341,10 +342,10 @@ def test_reupload_preserves_original_title_and_returns_stored_metadata(
     connection = _Connection(events)
     _install_dependencies(monkeypatch, document, model, s3, connection)
 
-    first = pdf_storage.ingest_document(PDF_BYTES, "Informe seguro", "application/pdf")
+    first = pdf_storage.ingest_document(PDF_BYTES, "Informe seguro", "application/pdf", 1)
     changed_title = replace(document, title="Nuevo título no persistido")
     _install_dependencies(monkeypatch, changed_title, model, s3, connection)
-    repeated = pdf_storage.ingest_document(PDF_BYTES, "Nuevo título", "application/pdf")
+    repeated = pdf_storage.ingest_document(PDF_BYTES, "Nuevo título", "application/pdf", 1)
 
     assert first["title"] == repeated["title"] == document.title
     assert first["document_id"] == repeated["document_id"]
@@ -362,7 +363,7 @@ def test_vectors_are_parameterized_and_connection_uses_only_ingest_role_password
     connection = _Connection(events)
     _install_dependencies(monkeypatch, document, model, s3, connection)
 
-    pdf_storage.ingest_document(PDF_BYTES, "Informe", "application/pdf")
+    pdf_storage.ingest_document(PDF_BYTES, "Informe", "application/pdf", 1)
 
     chunk_inserts = [
         (sql, params)
@@ -409,7 +410,7 @@ def test_s3_metadata_mismatch_stops_before_database(
     _install_dependencies(monkeypatch, document, model, s3, connection)
 
     with pytest.raises(pdf_storage.UploadUnavailable):
-        pdf_storage.ingest_document(PDF_BYTES, "Informe", "application/pdf")
+        pdf_storage.ingest_document(PDF_BYTES, "Informe", "application/pdf", 1)
 
     assert "db_connect" not in events
     assert connection.executions == []
@@ -450,14 +451,14 @@ def test_embedding_shape_and_document_id_collision_fail_safely(
     model.encode = lambda *_args, **_kwargs: [[0.0] * (EXPECTED_DIMENSION - 1) for _ in document.chunks]  # type: ignore[method-assign]
 
     with pytest.raises(pdf_storage.UploadUnavailable):
-        pdf_storage.ingest_document(PDF_BYTES, "Informe", "application/pdf")
+        pdf_storage.ingest_document(PDF_BYTES, "Informe", "application/pdf", 1)
     assert s3.objects == {}
 
     model = _Model(events)
     connection.collision = True
     _install_dependencies(monkeypatch, document, model, s3, connection)
     with pytest.raises(pdf_storage.UploadUnavailable):
-        pdf_storage.ingest_document(PDF_BYTES, "Informe", "application/pdf")
+        pdf_storage.ingest_document(PDF_BYTES, "Informe", "application/pdf", 1)
     assert connection.rollbacks == 1
     assert connection.commits == 0
 
@@ -482,4 +483,4 @@ def test_pdf_rejection_remains_distinct_and_precedes_all_side_effects(
     )
 
     with pytest.raises(PDFRejected, match="PDF rechazado de forma segura"):
-        pdf_storage.ingest_document(b"invalid", "Informe", "application/pdf")
+        pdf_storage.ingest_document(b"invalid", "Informe", "application/pdf", 1)

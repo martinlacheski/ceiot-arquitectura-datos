@@ -20,6 +20,7 @@ from loader.pdf_document import (
     parse_document,
     passage_text,
 )
+from shared.document_identity import checked_organization_id
 from shared.embeddings import (
     EMBEDDING_BATCH_SIZE,
     EXPECTED_DIMENSION,
@@ -154,16 +155,25 @@ def _persist_document(
     connection: Any,
     document: ParsedDocument,
     embeddings: Sequence[Sequence[float]],
+    organization_id: int,
 ) -> str:
+    # Validar antes de tocar la base: un tenant inválido no debe abrir transacción.
+    organization = checked_organization_id(organization_id)
     try:
         with connection.cursor() as cursor:
+            # Contexto del tenant: vale sólo para esta transacción (is_local=true).
+            # rag_ingest no ignora RLS, así que el WITH CHECK de la política
+            # tenant_isolation rechaza cualquier fila de otra organización.
+            cursor.execute(
+                "SELECT set_config('app.tenant_id', %s, true)", (str(organization),)
+            )
             cursor.execute(
                 """
                 INSERT INTO manual_documents (
                     document_id, version, title, object_key, content_type,
                     storage_status, sha256, byte_count, page_count, chunk_count,
-                    embedding_model, index_status
-                ) VALUES (%s, %s, %s, %s, %s, 'pending_upload', %s, %s, %s, 0, NULL, 'pending')
+                    embedding_model, index_status, organization_id
+                ) VALUES (%s, %s, %s, %s, %s, 'pending_upload', %s, %s, %s, 0, NULL, 'pending', %s)
                 ON CONFLICT (document_id, version) DO UPDATE
                 SET storage_status = 'pending_upload',
                     index_status = 'pending',
@@ -181,6 +191,7 @@ def _persist_document(
                     document.sha256,
                     document.byte_count,
                     document.page_count,
+                    organization,
                 ),
             )
             row = cursor.fetchone()
@@ -200,8 +211,9 @@ def _persist_document(
                     """
                     INSERT INTO manual_chunks (
                         document_id, version, chunk_index, page, section, content,
-                        object_key, embedding_model, embedding, content_sha256
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::vector, %s)
+                        object_key, embedding_model, embedding, content_sha256,
+                        organization_id
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::vector, %s, %s)
                     """,
                     (
                         chunk.document_id,
@@ -214,6 +226,7 @@ def _persist_document(
                         MODEL_NAME,
                         vector_literal(embedding),
                         hashlib.sha256(chunk.content.encode("utf-8")).hexdigest(),
+                        organization,
                     ),
                 )
 
@@ -246,7 +259,7 @@ def _persist_document(
 
 
 def ingest_parsed_document_stream(
-    document: ParsedDocument, pdf_bytes: bytes
+    document: ParsedDocument, pdf_bytes: bytes, organization_id: int
 ) -> Iterator[dict[str, Any]]:
     """Embed, store and index an already-validated document, yielding progress events.
 
@@ -258,6 +271,7 @@ def ingest_parsed_document_stream(
     ``ingest_document`` used to return directly.
     """
 
+    organization = checked_organization_id(organization_id)
     total = len(document.chunks)
     trace = ["pdf_validated"]
     yield {"event": "progress", "stage": "pdf_validated", "done": 0, "total": total}
@@ -283,7 +297,9 @@ def ingest_parsed_document_stream(
         yield {"event": "progress", "stage": "s3_verified", "done": total, "total": total}
 
         connection = _postgres_connection()
-        stored_title = _persist_document(connection, document, embeddings)
+        stored_title = _persist_document(
+            connection, document, embeddings, organization
+        )
         trace.append("postgres_indexed")
         yield {
             "event": "progress",
@@ -316,7 +332,9 @@ def ingest_parsed_document_stream(
     }
 
 
-def ingest_document(pdf_bytes: bytes, title: str, content_type: str) -> dict[str, Any]:
+def ingest_document(
+    pdf_bytes: bytes, title: str, content_type: str, organization_id: int
+) -> dict[str, Any]:
     """Validate, then embed/store/index a PDF synchronously, returning the final summary.
 
     Kept for scripts and tests that want a single call; internally drains
@@ -325,9 +343,9 @@ def ingest_document(pdf_bytes: bytes, title: str, content_type: str) -> dict[str
     """
 
     # PDFRejected remains distinct and no infrastructure is touched for invalid input.
-    document = parse_document(pdf_bytes, title, content_type)
+    document = parse_document(pdf_bytes, title, content_type, organization_id)
     result: dict[str, Any] | None = None
-    for event in ingest_parsed_document_stream(document, pdf_bytes):
+    for event in ingest_parsed_document_stream(document, pdf_bytes, organization_id):
         if event["event"] == "result":
             result = {key: value for key, value in event.items() if key != "event"}
     assert result is not None  # the generator always ends with a "result" event or raises

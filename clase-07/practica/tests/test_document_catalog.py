@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import os
 from typing import Any
 
@@ -37,6 +38,8 @@ class _Cursor:
         self.fetchone_rows = list(fetchone_rows or [])
         self.fetchall_rows = list(fetchall_rows or [])
         self.executions: list[tuple[str, tuple[Any, ...]]] = []
+        # Contexto de tenant fijado antes de cada consulta (set_config), aparte.
+        self.tenant_context: list[tuple[Any, ...]] = []
 
     def __enter__(self) -> _Cursor:
         return self
@@ -50,6 +53,10 @@ class _Cursor:
         return None
 
     def execute(self, sql: str, params: tuple[Any, ...]) -> None:
+        if "set_config('app.tenant_id'" in sql:
+            assert not self.executions, "el tenant se fija antes de cualquier consulta"
+            self.tenant_context.append(params)
+            return
         self.executions.append((" ".join(sql.split()), params))
 
     def fetchone(self) -> dict[str, Any] | None:
@@ -76,6 +83,9 @@ class _Connection:
 
     def cursor(self) -> _Cursor:
         return self._cursor
+
+    def transaction(self) -> contextlib.AbstractContextManager[None]:
+        return contextlib.nullcontext()
 
 
 def _install_connection(
@@ -136,8 +146,9 @@ def test_list_documents_returns_exact_bounded_inventory(
     cursor = _Cursor(fetchall_rows=[[DOCUMENT_ROW]])
     observed_settings = _install_connection(monkeypatch, cursor)
 
-    result = document_catalog.list_documents()
+    result = document_catalog.list_documents(2)
 
+    assert cursor.tenant_context == [("2",)]
     assert result == [
         {
             "document_id": DOCUMENT_ID,
@@ -179,8 +190,9 @@ def test_document_details_returns_ordered_bounded_chunks_and_six_float_preview(
     cursor = _Cursor(fetchone_rows=[DOCUMENT_ROW], fetchall_rows=[chunk_rows])
     _install_connection(monkeypatch, cursor)
 
-    result = document_catalog.document_details(DOCUMENT_ID)
+    result = document_catalog.document_details(DOCUMENT_ID, 1)
 
+    assert cursor.tenant_context == [("1",)]
     assert result is not None
     assert set(result) == {
         "document_id",
@@ -222,7 +234,7 @@ def test_document_details_returns_none_for_unknown_valid_id(
     cursor = _Cursor(fetchone_rows=[None])
     _install_connection(monkeypatch, cursor)
 
-    assert document_catalog.document_details(DOCUMENT_ID) is None
+    assert document_catalog.document_details(DOCUMENT_ID, 1) is None
     assert len(cursor.executions) == 1
 
 
@@ -238,7 +250,7 @@ def test_catalog_errors_are_sanitized_and_do_not_expose_database_details(
     monkeypatch.setattr(document_catalog.psycopg, "connect", fail_connect)
 
     with pytest.raises(document_catalog.CatalogUnavailable) as captured:
-        document_catalog.list_documents()
+        document_catalog.list_documents(1)
 
     assert str(captured.value) == (
         "El catálogo de documentos no está disponible temporalmente."

@@ -13,8 +13,9 @@ from shared.embeddings import (  # type: ignore[import-not-found]
     query_text,
     vector_literal,
 )
+from shared.document_identity import checked_organization_id  # type: ignore[import-not-found]
 from shared.rag_connection import (  # type: ignore[import-not-found]
-    rag_connection_settings,
+    tenant_cursor,
     validate_document_id,
 )
 from shared.retrieval import (  # type: ignore[import-not-found]
@@ -42,10 +43,13 @@ class ServiceUnavailable(RuntimeError):
 
 
 def retrieve_manual(
-    question: str, top_k: int, document_id: str | None = None
+    question: str, top_k: int, document_id: str | None = None, *, tenant: Tenant
 ) -> list[dict[str, Any]]:
+    """Recupera fragmentos de la organización del usuario (rol rag_readonly + RLS)."""
+
     if not 1 <= top_k <= MAX_TOP_K:
         raise ValueError(f"top_k debe estar entre 1 y {MAX_TOP_K}")
+    organization_id = checked_organization_id(tenant.organization_id)
     if document_id is not None:
         validate_document_id(document_id)
     try:
@@ -59,10 +63,8 @@ def retrieve_manual(
         ) from error
 
     try:
-        with (
-            psycopg.connect(**rag_connection_settings()) as connection,
-            connection.cursor() as cursor,
-        ):
+        # El tenant se fija en la misma transacción, antes de buscar vecinos.
+        with tenant_cursor(organization_id) as cursor:
             if document_id is None:
                 rows = nearest_manual_chunks(cursor, embedding, top_k)
             else:
@@ -197,21 +199,27 @@ def run_rag(
     tenant: Tenant | None = None,
     client: OpenRouterClient | None = None,
 ) -> dict[str, Any]:
-    # El aislamiento de documentos por organización llega con la tarea C07-5;
-    # por ahora el RAG no usa el tenant.
-    del tenant
+    if tenant is None:
+        raise ValueError("El RAG necesita el tenant del usuario")
     if document_id is None:
-        chunks = retrieve_manual(question, top_k)
+        chunks = retrieve_manual(question, top_k, tenant=tenant)
     else:
-        chunks = retrieve_manual(question, top_k, document_id=document_id)
+        chunks = retrieve_manual(question, top_k, document_id=document_id, tenant=tenant)
     sources = _manual_sources(chunks)
+    rag_trace = [f"tenant={tenant.organization_id}", "rol=rag_readonly"]
     if not chunks:
+        # Un documento de otra organización cae acá: RLS lo oculta, no hay
+        # evidencia y no se llama a OpenRouter.
         return {
             "answer": "No encontré evidencia suficiente en el manual para responder.",
             "sql": None,
             "rows": [],
             "sources": [],
-            "trace": ["modelo-embeddings-local", "recuperación-pgvector-sin-resultados"],
+            "trace": [
+                "modelo-embeddings-local",
+                "recuperación-pgvector-sin-resultados",
+                *rag_trace,
+            ],
         }
     chat = client or OpenRouterClient()
     answer = chat.chat(
@@ -233,7 +241,12 @@ def run_rag(
         "sql": None,
         "rows": [],
         "sources": sources,
-        "trace": ["modelo-embeddings-local", f"pgvector-top-{len(chunks)}", "openrouter-rag"],
+        "trace": [
+            "modelo-embeddings-local",
+            f"pgvector-top-{len(chunks)}",
+            *rag_trace,
+            "openrouter-rag",
+        ],
     }
 
 
@@ -395,10 +408,17 @@ def run_integrated(
     chunks: list[dict[str, Any]] = []
     if manual_question is not None:
         if document_id is None:
-            chunks = retrieve_manual(manual_question, top_k)
+            chunks = retrieve_manual(manual_question, top_k, tenant=tenant)
         else:
-            chunks = retrieve_manual(manual_question, top_k, document_id=document_id)
-        trace += ["modelo-embeddings-local", f"pgvector-top-{len(chunks)}"]
+            chunks = retrieve_manual(
+                manual_question, top_k, document_id=document_id, tenant=tenant
+            )
+        trace += [
+            "modelo-embeddings-local",
+            f"pgvector-top-{len(chunks)}",
+            f"tenant={tenant.organization_id}",
+            "rol=rag_readonly",
+        ]
 
     rows = list(result.rows) if result is not None else []
     sql = validated.sql if validated is not None else None

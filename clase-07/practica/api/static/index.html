@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Laboratorio IoT · Clase 06</title>
+  <title>Laboratorio IoT · Clase 07</title>
   <style>
     :root { color-scheme: light; font-family: system-ui, sans-serif; background: #f3f6f8; color: #17212b; }
     body { margin: 0; }
@@ -49,11 +49,13 @@
     </label>
     <p id="user-help" class="note">No hay login real: cada usuario pertenece a una organización y la base sólo le muestra las filas de la suya. El navegador envía únicamente el usuario; el servidor decide la organización.</p>
     <p id="user-error" class="error" role="alert" hidden></p>
+    <p class="note"><a id="schema-link" href="/api/sql-schema" target="_blank" rel="noopener">Ver esquema que recibe el modelo</a> (el esquema y los valores de ejemplo que Text-to-SQL envía al modelo para el usuario elegido).</p>
   </section>
 
   <section class="panel" aria-labelledby="upload-title">
     <h2 id="upload-title">Cargar e inspeccionar un PDF</h2>
     <p class="note">La carga y la inspección son locales. Sólo una pregunta posterior a la IA puede enviar a OpenRouter fragmentos recuperados del PDF. Las llamadas al modelo pueden tener costo; el umbral aproximado 0,55 fue calibrado para este laboratorio con BAAI/bge-m3 y no es universal.</p>
+    <p id="upload-as" class="note" aria-live="polite"></p>
     <form id="upload-form">
       <label for="pdf-file">Documento PDF
         <input id="pdf-file" name="pdf" type="file" accept=".pdf,application/pdf" aria-describedby="pdf-help" required>
@@ -295,7 +297,7 @@
     documentsStatus.textContent = 'Cargando documentos…';
     documentsError.hidden = true;
     try {
-      const response = await fetch('/api/documents');
+      const response = await fetch(`/api/documents?user_id=${encodeURIComponent(userSelect.value)}`);
       const payload = await readJson(response);
       if (requestGeneration !== catalogRequestGeneration) return false;
       if (!response.ok) throw new Error(safeDetail(payload, 'No se pudo cargar la lista de documentos.'));
@@ -380,7 +382,7 @@
     }
     updateInspectToggles();
     try {
-      const response = await fetch(`/api/documents/${encodeURIComponent(documentId)}`);
+      const response = await fetch(`/api/documents/${encodeURIComponent(documentId)}?user_id=${encodeURIComponent(userSelect.value)}`);
       const payload = await readJson(response);
       if (requestGeneration !== inspectRequestGeneration) return false;
       if (!response.ok) throw new Error(safeDetail(payload, 'No se pudo inspeccionar el documento.'));
@@ -420,7 +422,8 @@
     uploadStatus.textContent = 'Cargando, fragmentando e indexando…';
     document.querySelector('#upload-progress').textContent = '';
     try {
-      const response = await fetch('/api/documents', {
+      if (!userSelect.value) throw new Error('Elegí un usuario simulado antes de cargar un PDF.');
+      const response = await fetch(`/api/documents?user_id=${encodeURIComponent(userSelect.value)}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/pdf',
@@ -545,6 +548,29 @@
     });
   }
 
+  // Muestra a nombre de quién se cargará el PDF y a qué usuario corresponde el
+  // esquema que ve el modelo. El navegador sólo conoce el id del usuario.
+  function updateUserContext() {
+    const option = userSelect.selectedOptions[0];
+    setText('#upload-as', option ? `Se cargará como: ${option.textContent}` : '');
+    document.querySelector('#schema-link').href = userSelect.value
+      ? `/api/sql-schema?user_id=${encodeURIComponent(userSelect.value)}`
+      : '/api/sql-schema';
+  }
+
+  // Cada organización tiene sus propios documentos: al cambiar de usuario se
+  // descarta lo que se mostraba del anterior y se vuelve a pedir la lista.
+  userSelect.addEventListener('change', () => {
+    updateUserContext();
+    hideDocumentDetails();
+    documentSelect.value = '';
+    document.querySelector('#upload-result').hidden = true;
+    uploadStatus.textContent = '';
+    uploadError.hidden = true;
+    results.hidden = true;
+    loadDocuments();
+  });
+
   async function loadUsers() {
     try {
       const response = await fetch('/api/users');
@@ -558,6 +584,7 @@
         userSelect.appendChild(option);
       });
       userError.hidden = true;
+      updateUserContext();
     } catch (error) {
       userError.textContent = 'No se pudo cargar la lista de usuarios simulados.';
       userError.hidden = false;
@@ -618,8 +645,8 @@
   });
 
   updateQueryModeUI();
-  loadUsers();
-  loadDocuments();
+  // La lista de documentos depende del usuario elegido: primero los usuarios.
+  loadUsers().then(() => loadDocuments());
 </script>
 </body>
 </html>

@@ -157,7 +157,7 @@ def test_pdf_limits_follow_environment() -> None:
     result = run_python(
         "from loader import pdf_document as p;"
         "print(p.MAX_PDF_BYTES, p.MAX_CHUNK_CHARS, p.CHUNK_OVERLAP_CHARS);"
-        "\ntry: p.parse_document(b'', 'Informe', 'application/pdf')\n"
+        "\ntry: p.parse_document(b'', 'Informe', 'application/pdf', 1)\n"
         "except p.PDFRejected as e: print(e.reason)",
         MAX_PDF_MIB="10",
         CHUNK_MAX_CHARS="800",

@@ -67,7 +67,7 @@ def test_rag_retrieves_before_chat_and_preserves_citations(
     events: list[str] = []
     chat = FakeChat("Usá el patrón de referencia [página 1].")
 
-    def retrieve(question: str, top_k: int) -> list[dict[str, Any]]:
+    def retrieve(question: str, top_k: int, *, tenant: Any) -> list[dict[str, Any]]:
         events.append(f"retrieve-{top_k}")
         return CHUNKS
 
@@ -80,7 +80,7 @@ def test_rag_retrieves_before_chat_and_preserves_citations(
     chat.chat = observed_chat  # type: ignore[method-assign]
     monkeypatch.setattr(workflows, "retrieve_manual", retrieve)
 
-    response = workflows.run_rag("¿Cómo calibro AIR-002?", 1, client=chat)  # type: ignore[arg-type]
+    response = workflows.run_rag("¿Cómo calibro AIR-002?", 1, tenant=ANA, client=chat)  # type: ignore[arg-type]
 
     assert events == ["retrieve-1", "chat"]
     assert response["sql"] is None and response["rows"] == []
@@ -97,9 +97,9 @@ def test_rag_without_relevant_chunks_never_calls_openrouter(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     chat = FakeChat("no debe consumirse")
-    monkeypatch.setattr(workflows, "retrieve_manual", lambda _q, _k: [])
+    monkeypatch.setattr(workflows, "retrieve_manual", lambda _q, _k, **_kw: [])
 
-    response = workflows.run_rag("¿Cuál es el precio y el clima?", 4, client=chat)  # type: ignore[arg-type]
+    response = workflows.run_rag("¿Cuál es el precio y el clima?", 4, tenant=ANA, client=chat)  # type: ignore[arg-type]
 
     assert chat.calls == []
     assert response["sources"] == []
@@ -115,7 +115,7 @@ def test_rag_selected_document_passes_keyword_and_keeps_filtered_source(
     chat = FakeChat("Respuesta respaldada por el documento seleccionado.")
 
     def retrieve(
-        question: str, top_k: int, *, document_id: str
+        question: str, top_k: int, *, document_id: str, tenant: Any
     ) -> list[dict[str, Any]]:
         observed.append((question, top_k, document_id))
         return selected_chunks
@@ -123,7 +123,7 @@ def test_rag_selected_document_passes_keyword_and_keeps_filtered_source(
     monkeypatch.setattr(workflows, "retrieve_manual", retrieve)
 
     response = workflows.run_rag(
-        "¿Qué indica el informe?", 2, document_id=document_id, client=chat  # type: ignore[arg-type]
+        "¿Qué indica el informe?", 2, document_id=document_id, tenant=ANA, client=chat  # type: ignore[arg-type]
     )
 
     assert observed == [("¿Qué indica el informe?", 2, document_id)]
@@ -140,7 +140,7 @@ def test_rag_selected_document_without_evidence_does_not_broaden_or_call_ai(
     chat = FakeChat("no debe consumirse")
 
     def retrieve(
-        _question: str, _top_k: int, *, document_id: str
+        _question: str, _top_k: int, *, document_id: str, tenant: Any
     ) -> list[dict[str, Any]]:
         observed.append(document_id)
         return []
@@ -148,7 +148,7 @@ def test_rag_selected_document_without_evidence_does_not_broaden_or_call_ai(
     monkeypatch.setattr(workflows, "retrieve_manual", retrieve)
 
     response = workflows.run_rag(
-        "¿Qué indica el informe?", 4, document_id=document_id, client=chat  # type: ignore[arg-type]
+        "¿Qué indica el informe?", 4, document_id=document_id, tenant=ANA, client=chat  # type: ignore[arg-type]
     )
 
     assert observed == [document_id]
@@ -229,7 +229,7 @@ def test_integrated_returns_telemetry_and_manual_sources_without_claiming_citati
 ) -> None:
     chat = FakeChat(BOTH_BRANCHES_PLAN, VALID_SQL, "El promedio de CO2 fue 805,67 ppm.")
     monkeypatch.setattr(workflows, "execute_validated_sql", lambda _validated, _tenant_id: RESULT)
-    monkeypatch.setattr(workflows, "retrieve_manual", lambda _q, _k: CHUNKS)
+    monkeypatch.setattr(workflows, "retrieve_manual", lambda _q, _k, **_kw: CHUNKS)
 
     response = workflows.run_integrated("¿Qué indica AIR-002?", 2, tenant=ANA, client=chat)  # type: ignore[arg-type]
 
@@ -265,7 +265,7 @@ def test_integrated_without_manual_skips_synthesis_and_rejects_fabricated_citati
     )
     chat = FakeChat(BOTH_BRANCHES_PLAN, VALID_SQL, fabricated)
     monkeypatch.setattr(workflows, "execute_validated_sql", lambda _validated, _tenant_id: RESULT)
-    monkeypatch.setattr(workflows, "retrieve_manual", lambda _q, _k: [])
+    monkeypatch.setattr(workflows, "retrieve_manual", lambda _q, _k, **_kw: [])
 
     response = workflows.run_integrated("¿Cuál fue el promedio de CO2?", 4, tenant=ANA, client=chat)  # type: ignore[arg-type]
 
@@ -290,7 +290,7 @@ def test_integrated_selected_document_without_evidence_keeps_only_telemetry(
     monkeypatch.setattr(workflows, "execute_validated_sql", lambda _validated, _tenant_id: RESULT)
 
     def retrieve(
-        _question: str, _top_k: int, *, document_id: str
+        _question: str, _top_k: int, *, document_id: str, tenant: Any
     ) -> list[dict[str, Any]]:
         observed.append(document_id)
         return []
@@ -343,7 +343,7 @@ def test_integrated_orchestrator_routes_manual_only_without_sql_generation(
         raise AssertionError("SQL generation must not run for a manual-only plan")
 
     monkeypatch.setattr(workflows, "_generate_sql", must_not_generate_sql)
-    monkeypatch.setattr(workflows, "retrieve_manual", lambda _q, _k: CHUNKS)
+    monkeypatch.setattr(workflows, "retrieve_manual", lambda _q, _k, **_kw: CHUNKS)
 
     response = workflows.run_integrated(
         "¿Cómo debe recalibrarse el sensor?", 2, tenant=ANA, client=chat  # type: ignore[arg-type]
@@ -362,7 +362,7 @@ def test_integrated_malformed_plan_falls_back_to_running_both_branches(
 ) -> None:
     chat = FakeChat("esto no es JSON", VALID_SQL, "Respuesta combinada.")
     monkeypatch.setattr(workflows, "execute_validated_sql", lambda _validated, _tenant_id: RESULT)
-    monkeypatch.setattr(workflows, "retrieve_manual", lambda _q, _k: CHUNKS)
+    monkeypatch.setattr(workflows, "retrieve_manual", lambda _q, _k, **_kw: CHUNKS)
 
     response = workflows.run_integrated("¿Qué indica AIR-002?", 2, tenant=ANA, client=chat)  # type: ignore[arg-type]
 

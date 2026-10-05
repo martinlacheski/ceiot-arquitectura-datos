@@ -31,6 +31,8 @@ COMMENT ON COLUMN public.measurements.variable IS 'Magnitud medida; los valores 
 COMMENT ON COLUMN public.measurements.value IS 'Valor medido, expresado en la unidad de la columna unit';
 COMMENT ON COLUMN public.measurements.quality IS 'Calidad del dato: GOOD, SUSPECT o BAD';
 COMMENT ON TABLE public.manual_documents IS 'Manuales y PDF cargados (metadatos; el archivo vive en S3)';
+COMMENT ON COLUMN public.manual_documents.organization_id IS 'Identificador del tenant (rol de tenant_id): organización propietaria del documento';
+COMMENT ON COLUMN public.manual_chunks.organization_id IS 'Identificador del tenant (rol de tenant_id): organización propietaria del fragmento';
 COMMENT ON TABLE public.manual_chunks IS 'Fragmentos de texto de los PDF con su embedding (pgvector)';
 COMMENT ON COLUMN public.manual_chunks.embedding IS 'Embedding de 1024 dimensiones; distancia coseno con el operador <=>';
 

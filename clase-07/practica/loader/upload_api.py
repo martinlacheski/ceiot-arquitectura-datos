@@ -36,6 +36,8 @@ NDJSON_CONTENT_TYPE = "application/x-ndjson"
 DEFAULT_TITLE = "Documento PDF"
 MAX_ENCODED_TITLE_CHARS = 1200
 _BAD_PERCENT_ESCAPE = re.compile(r"%(?![0-9A-Fa-f]{2})")
+# Sólo dígitos ASCII, sin ceros a la izquierda ni signo: un entero positivo.
+_ORGANIZATION_ID = re.compile(r"[1-9][0-9]{0,17}")
 _INGESTION_GATE = threading.Lock()
 _GENERIC_UNAVAILABLE = "La carga no está disponible temporalmente."
 
@@ -72,6 +74,22 @@ async def _bounded_body(request: Request) -> bytes:
     return bytes(body)
 
 
+def _organization_from_header(raw_value: str | None) -> int:
+    """Organización dueña del documento, enviada por la API (salto interno).
+
+    Este servicio no es público: sólo lo llama ``api/web_app.py``, que ya
+    tradujo el usuario simulado a su organización. Igual se valida el formato
+    acá (entero positivo). Que la organización exista lo garantiza la base: la
+    clave foránea a ``organizations`` y la política RLS rechazan el INSERT.
+    """
+
+    if raw_value is None or _ORGANIZATION_ID.fullmatch(raw_value) is None:
+        raise HTTPException(
+            status_code=422, detail="Falta una organización válida para la carga."
+        )
+    return int(raw_value)
+
+
 def _decoded_title(raw_title: str | None) -> str:
     if raw_title is None:
         return DEFAULT_TITLE
@@ -105,7 +123,9 @@ def _stream_error_detail(error: Exception) -> str:
     return _GENERIC_UNAVAILABLE
 
 
-async def _event_stream(document: ParsedDocument, pdf_bytes: bytes) -> AsyncIterator[bytes]:
+async def _event_stream(
+    document: ParsedDocument, pdf_bytes: bytes, organization_id: int
+) -> AsyncIterator[bytes]:
     """Run ingestion in a worker thread and relay each event as one ndjson line.
 
     Embedding, S3 and PostgreSQL calls are all blocking; running them in a thread and
@@ -119,7 +139,9 @@ async def _event_stream(document: ParsedDocument, pdf_bytes: bytes) -> AsyncIter
 
     def runner() -> None:
         try:
-            for event in pdf_storage.ingest_parsed_document_stream(document, pdf_bytes):
+            for event in pdf_storage.ingest_parsed_document_stream(
+                document, pdf_bytes, organization_id
+            ):
                 events.put(event)
         except Exception as error:  # noqa: BLE001 - converted to a sanitized error event
             events.put({"event": "error", "detail": _stream_error_detail(error)})
@@ -147,6 +169,7 @@ async def upload_document(
         alias="X-Document-Title",
         max_length=MAX_ENCODED_TITLE_CHARS,
     ),
+    organization_header: str | None = Header(default=None, alias="X-Organization-Id"),
 ) -> StreamingResponse:
     """Validate and parse one raw PDF, then stream ingestion progress as ndjson.
 
@@ -163,6 +186,7 @@ async def upload_document(
             detail="El tipo de contenido debe ser application/pdf.",
         )
     _reject_known_oversize(request)
+    organization_id = _organization_from_header(organization_header)
     title = _decoded_title(document_title)
 
     if not _INGESTION_GATE.acquire(blocking=False):
@@ -174,7 +198,7 @@ async def upload_document(
     try:
         pdf_bytes = await _bounded_body(request)
         document = await run_in_threadpool(
-            parse_document, pdf_bytes, title, PDF_CONTENT_TYPE
+            parse_document, pdf_bytes, title, PDF_CONTENT_TYPE, organization_id
         )
     except PDFRejected as error:
         _INGESTION_GATE.release()
@@ -187,5 +211,6 @@ async def upload_document(
         raise HTTPException(status_code=503, detail=_GENERIC_UNAVAILABLE) from error
 
     return StreamingResponse(
-        _event_stream(document, pdf_bytes), media_type=NDJSON_CONTENT_TYPE
+        _event_stream(document, pdf_bytes, organization_id),
+        media_type=NDJSON_CONTENT_TYPE
     )

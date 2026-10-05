@@ -24,7 +24,6 @@ from pydantic import (  # type: ignore[import-not-found]
     Field,
     ValidationError,
     field_validator,
-    model_validator,
 )
 
 from api import workflows  # type: ignore[import-not-found]
@@ -38,17 +37,22 @@ from loader.pdf_document import (  # type: ignore[import-not-found]
     MAX_TITLE_CHARS,
 )
 from shared import document_catalog  # type: ignore[import-not-found]
+from shared.document_identity import (  # type: ignore[import-not-found]
+    derive_document_id,
+    object_key_for,
+)
 from shared.rag_connection import validate_document_id  # type: ignore[import-not-found]
 from shared.retrieval import MAX_TOP_K  # type: ignore[import-not-found]
 from shared.sql_guard import SQLRejected  # type: ignore[import-not-found]
 from shared.sql_schema import SchemaUnavailable, schema_prompt  # type: ignore[import-not-found]
 from shared.tenants import Tenant, list_users, resolve_user  # type: ignore[import-not-found]
 
-app = FastAPI(title="Laboratorio IoT Clase 06", version="1.0.0")
+app = FastAPI(title="Laboratorio IoT Clase 07", version="1.0.0")
 INDEX_HTML = Path(__file__).with_name("static") / "index.html"
 PDF_CONTENT_TYPE = "application/pdf"
 NDJSON_CONTENT_TYPE = "application/x-ndjson"
 UPLOADER_URL = "http://uploader:8007/internal/documents"
+ORGANIZATION_HEADER = "X-Organization-Id"
 # No total cap: uploads scale with document size. A generous per-read timeout covers
 # one embedding batch on a slow CPU (measured ~4.4 s for a batch of 4 at 1.1 s/chunk;
 # this leaves wide margin), while connect/write stay short since the body is already
@@ -154,13 +158,13 @@ class UploadSummary(BaseModel):
             raise ValueError("unexpected upload trace")
         return value
 
-    @model_validator(mode="after")
-    def validate_storage_identity(self) -> UploadSummary:
-        expected_id = f"upload-{self.sha256[:24]}"
-        expected_key = f"uploads/{expected_id}/v1/{self.sha256}.pdf"
+    def check_belongs_to(self, organization_id: int) -> None:
+        """La identidad se deriva de (organización, contenido): debe coincidir."""
+
+        expected_id = derive_document_id(organization_id, self.sha256)
+        expected_key = object_key_for(organization_id, expected_id, self.sha256)
         if self.document_id != expected_id or self.object_key != expected_key:
             raise ValueError("incoherent upload storage identity")
-        return self
 
 
 def render_index() -> str:
@@ -297,7 +301,7 @@ def _validated_progress_event(payload: dict[str, Any]) -> dict[str, Any] | None:
 
 
 async def _relay_upload_events(
-    response: httpx.Response, pdf_bytes: bytes
+    response: httpx.Response, pdf_bytes: bytes, organization_id: int
 ) -> AsyncIterator[bytes]:
     """Re-validate and re-encode each upstream ndjson line before relaying it.
 
@@ -340,6 +344,7 @@ async def _relay_upload_events(
                 summary = UploadSummary.model_validate(fields)
                 if summary.byte_count != len(pdf_bytes):
                     raise ValueError("upstream byte count does not match request body")
+                summary.check_belongs_to(organization_id)
             except (ValueError, ValidationError, TypeError):
                 yield _encode_event(
                     {"event": "error", "detail": _INVALID_UPSTREAM_ERROR}
@@ -353,18 +358,21 @@ async def _relay_upload_events(
 
 
 @app.get("/api/documents")
-def list_documents() -> list[dict[str, Any]]:
+def list_documents(user_id: str) -> list[dict[str, Any]]:
+    # Sólo los documentos de la organización del usuario: lo filtra la base (RLS).
+    tenant = _tenant_for(user_id)
     try:
-        return document_catalog.list_documents()
+        return document_catalog.list_documents(tenant.organization_id)
     except document_catalog.CatalogUnavailable as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
 
 
 @app.get("/api/documents/{document_id}")
-def document_details(document_id: str) -> dict[str, Any]:
+def document_details(document_id: str, user_id: str) -> dict[str, Any]:
+    tenant = _tenant_for(user_id)
     try:
         selected_id = validate_document_id(document_id)
-        details = document_catalog.document_details(selected_id)
+        details = document_catalog.document_details(selected_id, tenant.organization_id)
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
     except document_catalog.CatalogUnavailable as error:
@@ -377,6 +385,7 @@ def document_details(document_id: str) -> dict[str, Any]:
 @app.post("/api/documents")
 async def upload_document(
     request: Request,
+    user_id: str,
     document_title: str | None = Header(
         default=None,
         alias="X-Document-Title",
@@ -392,6 +401,14 @@ async def upload_document(
     stream, so the browser sees progress as it happens.
     """
 
+    # La organización sale siempre del usuario simulado, nunca del cliente: ni
+    # un parámetro extra ni la cabecera interna X-Organization-Id se aceptan.
+    if set(request.query_params) - {"user_id"} or ORGANIZATION_HEADER in request.headers:
+        raise HTTPException(
+            status_code=422,
+            detail="La organización la determina el usuario; el cliente no la envía.",
+        )
+    tenant = _tenant_for(user_id)
     if _declared_mime(request) != PDF_CONTENT_TYPE:
         raise HTTPException(
             status_code=415,
@@ -400,7 +417,11 @@ async def upload_document(
     _reject_known_oversize(request)
     encoded_title = _encoded_title(document_title)
     pdf_bytes = await _bounded_body(request)
-    headers = {"Content-Type": PDF_CONTENT_TYPE}
+    # Salto interno de confianza: el uploader recibe la organización ya resuelta.
+    headers = {
+        "Content-Type": PDF_CONTENT_TYPE,
+        ORGANIZATION_HEADER: str(tenant.organization_id),
+    }
     if encoded_title is not None:
         headers["X-Document-Title"] = encoded_title
 
@@ -444,7 +465,9 @@ async def upload_document(
 
     async def relay() -> AsyncIterator[bytes]:
         try:
-            async for chunk in _relay_upload_events(response, pdf_bytes):
+            async for chunk in _relay_upload_events(
+                response, pdf_bytes, tenant.organization_id
+            ):
                 yield chunk
         finally:
             await stream_ctx.__aexit__(None, None, None)
