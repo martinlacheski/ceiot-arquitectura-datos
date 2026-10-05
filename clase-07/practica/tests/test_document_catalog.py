@@ -167,7 +167,8 @@ def test_list_documents_returns_exact_bounded_inventory(
     assert "storage_status = %s" in sql and "index_status = %s" in sql
     assert "left(title, 200)" in sql and "left(object_key, 512)" in sql
     assert "LIMIT %s" in sql
-    assert params == ("available", "indexed", 120, 100)
+    assert "chunk_count >= 1" in sql and "BETWEEN" not in sql
+    assert params == ("available", "indexed", 100)
     assert observed_settings[0]["user"] == "rag_readonly"
 
 

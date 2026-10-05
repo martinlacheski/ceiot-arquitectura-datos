@@ -553,6 +553,32 @@ def test_live_listing_is_filtered_by_organization(two_tenant_documents: dict[int
     assert two_tenant_documents[2] in bruno and two_tenant_documents[1] not in bruno
 
 
+def test_live_listing_includes_documents_with_more_chunks_than_the_details_preview(
+    two_tenant_documents: dict[int, str],
+) -> None:
+    # Una tesis real indexa cientos de fragmentos: el tope de 120 es sólo de la
+    # vista de detalle, no un motivo para ocultar el documento del listado.
+    with _owner() as connection:
+        connection.execute(
+            "UPDATE manual_documents SET chunk_count = 378 WHERE document_id = %s",
+            (two_tenant_documents[1],),
+        )
+
+    ana = {item["document_id"] for item in document_catalog.list_documents(1)}
+
+    assert two_tenant_documents[1] in ana
+
+
+@pytest.mark.parametrize("extra", ["organization_id", "tenant_id"])
+@pytest.mark.parametrize("path", ["/api/documents", f"/api/documents/{_DOC[2]}"])
+def test_document_reads_reject_a_tenant_chosen_by_the_client(path: str, extra: str) -> None:
+    client = TestClient(web_app.app)
+
+    response = client.get(path, params={"user_id": "ana", extra: "2"})
+
+    assert response.status_code == 422
+
+
 def test_live_details_of_another_tenants_document_do_not_exist(
     two_tenant_documents: dict[int, str],
 ) -> None:

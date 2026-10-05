@@ -357,9 +357,17 @@ async def _relay_upload_events(
         return
 
 
+def _reject_client_tenant(request: Request) -> None:
+    # La organización sale del usuario, nunca de la consulta: cualquier otro
+    # parámetro (organization_id, tenant_id…) se rechaza en vez de ignorarse.
+    if set(request.query_params) - {"user_id"}:
+        raise HTTPException(status_code=422, detail="Sólo se acepta el parámetro user_id.")
+
+
 @app.get("/api/documents")
-def list_documents(user_id: str) -> list[dict[str, Any]]:
+def list_documents(request: Request, user_id: str) -> list[dict[str, Any]]:
     # Sólo los documentos de la organización del usuario: lo filtra la base (RLS).
+    _reject_client_tenant(request)
     tenant = _tenant_for(user_id)
     try:
         return document_catalog.list_documents(tenant.organization_id)
@@ -368,7 +376,8 @@ def list_documents(user_id: str) -> list[dict[str, Any]]:
 
 
 @app.get("/api/documents/{document_id}")
-def document_details(document_id: str, user_id: str) -> dict[str, Any]:
+def document_details(request: Request, document_id: str, user_id: str) -> dict[str, Any]:
+    _reject_client_tenant(request)
     tenant = _tenant_for(user_id)
     try:
         selected_id = validate_document_id(document_id)
