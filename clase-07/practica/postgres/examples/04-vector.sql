@@ -1,13 +1,23 @@
 \set ON_ERROR_STOP on
 
--- La consulta nativa usa como referencia un embedding real ya indexado.
--- Así se observa <=> directamente en psql, sin fabricar un vector de ejemplo.
+-- Este ejemplo trabaja sobre los PDF que cargues desde la interfaz web: no hay
+-- documentos de ejemplo versionados. Si todavía no cargaste ninguno, las
+-- consultas devuelven 0 filas y el aviso de abajo lo indica.
+SELECT count(*) AS indexed_chunks,
+       CASE WHEN count(*) = 0
+            THEN 'No hay fragmentos: cargá un PDF desde la interfaz web (http://127.0.0.1:8007) y volvé a ejecutar este script.'
+            ELSE 'Hay fragmentos indexados: las consultas siguientes usan el primero como referencia.'
+       END AS note
+FROM manual_chunks;
+
+-- La consulta nativa usa como referencia un embedding real ya indexado (el
+-- primer fragmento de cualquier documento cargado). Así se observa <=>
+-- directamente en psql, sin fabricar un vector de ejemplo.
 WITH query_embedding AS (
     SELECT embedding
     FROM manual_chunks
-    WHERE document_id = 'env-x-manual'
-      AND version = 1
-      AND section = 'Recalibración tras reemplazo de batería'
+    ORDER BY document_id, version, chunk_index
+    LIMIT 1
 )
 SELECT
     chunk.document_id,
@@ -23,7 +33,8 @@ CROSS JOIN query_embedding
 ORDER BY chunk.embedding <=> query_embedding.embedding
 LIMIT 4;
 
--- Esta paráfrasis no aparece literalmente en el PDF: ILIKE no hace búsqueda semántica.
+-- ILIKE sólo encuentra coincidencias literales: una paráfrasis de la pregunta
+-- casi nunca aparece tal cual en el PDF, a diferencia de la búsqueda vectorial.
 SELECT
     document_id,
     version,

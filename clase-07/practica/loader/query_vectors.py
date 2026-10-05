@@ -6,7 +6,7 @@ from __future__ import annotations
 import argparse
 from typing import Any
 
-from loader.ingest_vectors import postgres_connection
+from loader.seed_services import postgres_connection
 from shared.embeddings import (  # type: ignore[import-not-found]
     MODEL_NAME,
     embedding_model,
@@ -14,8 +14,6 @@ from shared.embeddings import (  # type: ignore[import-not-found]
     vector_literal,
 )
 from shared.retrieval import MAX_TOP_K, nearest_manual_chunks  # type: ignore[import-not-found]
-
-DEFAULT_QUESTION = "¿Cómo debe recalibrarse el sensor ENV-X después de reemplazar la batería?"
 
 
 def semantic_search(cursor: Any, embedding: str, top_k: int) -> list[tuple[Any, ...]]:
@@ -55,7 +53,7 @@ def print_results(title: str, rows: list[tuple[Any, ...]], semantic: bool) -> No
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--question", default=DEFAULT_QUESTION)
+    parser.add_argument("--question", required=True)
     parser.add_argument("--top-k", type=int, default=min(3, MAX_TOP_K))
     args = parser.parse_args()
     if not args.question.strip():
@@ -73,7 +71,7 @@ def main() -> None:
         cursor.execute("SELECT count(*), min(embedding_model), max(embedding_model) FROM manual_chunks")
         count, first_model, last_model = cursor.fetchone()
         if count == 0:
-            raise RuntimeError("No hay chunks: ejecutá primero ingest_vectors.py")
+            raise RuntimeError("No hay chunks: subí un PDF desde la interfaz web antes de consultar")
         if first_model != model_name or last_model != model_name:
             raise RuntimeError("Los chunks no fueron indexados con el modelo de consulta")
         semantic_rows = semantic_search(cursor, encoded, args.top_k)

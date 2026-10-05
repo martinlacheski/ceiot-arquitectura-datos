@@ -101,20 +101,20 @@
         <textarea id="question" name="question" required minlength="3" maxlength="500"
           aria-describedby="question-help"></textarea>
       </label>
-      <p id="question-help" class="note">La redacción es libre, pero las respuestas se basan en el manual inicial, los PDF que cargues y el esquema real de la base. Una pregunta ajena al dominio puede no encontrar evidencia, y todo SQL generado se ejecuta con un rol de sólo lectura.</p>
+      <p id="question-help" class="note">La redacción es libre, pero las respuestas se basan en los PDF que cargues y el esquema real de la base. Una pregunta ajena al dominio puede no encontrar evidencia, y todo SQL generado se ejecuta con un rol de sólo lectura.</p>
       <details>
         <summary>Ejemplos opcionales</summary>
         <div class="examples">
-          <button class="example" type="button" data-mode="rag" data-manual-seed="true" data-question="¿Cómo debe recalibrarse el sensor ENV-X después de reemplazar la batería?">Documentos (manual inicial) · ¿Cómo debe recalibrarse el sensor ENV-X después de reemplazar la batería?</button>
+          <button class="example" type="button" data-mode="rag" data-question="Resumí los puntos principales de los documentos cargados.">Documentos · Resumí los puntos principales de los documentos cargados.</button>
           <button class="example" type="button" data-mode="text-to-sql" data-question="¿Cuál fue la temperatura promedio del Aula 204 durante las últimas 24 horas?">Telemetría · ¿Cuál fue la temperatura promedio del Aula 204 durante las últimas 24 horas?</button>
-          <button class="example" type="button" data-mode="integrated" data-manual-seed="true" data-question="El sensor ENV-X del Aula 204 presenta mediciones anómalas. ¿Cuáles fueron sus valores promedio durante las últimas 24 horas y qué procedimiento de calibración indica su manual?">Integrado (mediciones y manual inicial) · El sensor ENV-X del Aula 204 presenta mediciones anómalas. ¿Cuáles fueron sus valores promedio durante las últimas 24 horas y qué procedimiento de calibración indica su manual?</button>
+          <button class="example" type="button" data-mode="integrated" data-question="El sensor AMB-001 del Aula 204 presenta mediciones anómalas. ¿Cuáles fueron sus valores promedio durante las últimas 24 horas y qué indican los documentos cargados sobre cómo proceder?">Integrado (mediciones y documentos) · El sensor AMB-001 del Aula 204 presenta mediciones anómalas. ¿Cuáles fueron sus valores promedio durante las últimas 24 horas y qué indican los documentos cargados sobre cómo proceder?</button>
         </div>
       </details>
       <label for="top-k">Cantidad máxima de fragmentos (1–{{MAX_TOP_K}})
         <input id="top-k" name="top_k" type="number" min="1" max="{{MAX_TOP_K}}" value="{{DEFAULT_TOP_K}}" required>
       </label>
       <button id="submit" type="submit">Consultar</button>
-      <p class="note">Las llamadas a OpenRouter pueden tener costo. El corte de evidencia es aproximado (0,55): se calibró empíricamente para BAAI/bge-m3 con el manual inicial y no es universal para otros PDF.</p>
+      <p class="note">Las llamadas a OpenRouter pueden tener costo. El corte de evidencia es aproximado (0,55): se calibró empíricamente para BAAI/bge-m3 con documentos de prueba y no es universal para otros PDF.</p>
       <p id="status" role="status" aria-live="polite"></p>
       <p id="error" class="error" role="alert" hidden></p>
     </form>
@@ -147,7 +147,6 @@
     s3_verified: 'Verificando almacenamiento',
     postgres_indexed: 'Indexando en la base de datos'
   };
-  const MANUAL_SEED_DOCUMENT_ID = "env-x-manual";
   const MODE_GUIDES = {
     rag: 'Busca con el modelo de embeddings local (BAAI/bge-m3) en el manual o PDF seleccionado (o en todos) y muestra la fuente con página, fragmento y distancia. OpenRouter sintetiza la respuesta sólo si encuentra fragmentos.',
     'text-to-sql': 'OpenRouter genera una consulta SQL: el sistema lee el esquema real de la base (tablas, claves y valores) y se lo pasa al modelo, que puede usar JOIN, subconsultas, TimescaleDB y PostGIS. La consulta se ejecuta con un rol de sólo lectura; si la base la rechaza, el modelo la corrige una vez. Muestra el SQL y las filas. Este modo ignora los PDF, el documento elegido y la cantidad de fragmentos.',
@@ -179,13 +178,7 @@
     example.addEventListener('click', () => {
       question.value = example.dataset.question;
       mode.value = example.dataset.mode;
-      let manualHint = '';
-      if (example.dataset.manualSeed === 'true') {
-        manualHint = selectManualSeedDocument()
-          ? ' Se seleccionó el manual inicial para este ejemplo.'
-          : ' El manual inicial no está disponible; se mantiene la búsqueda en todos los documentos.';
-      }
-      updateQueryModeUI(manualHint);
+      updateQueryModeUI();
       question.focus();
     });
   });
@@ -508,18 +501,6 @@
     const topK = document.querySelector('#top-k');
     topK.disabled = textToSql;
     topK.setAttribute('aria-disabled', String(textToSql));
-  }
-
-  function selectManualSeedDocument() {
-    const manualSeedAvailable = [...documentSelect.options].some(
-      (option) => option.value === MANUAL_SEED_DOCUMENT_ID
-    );
-    if (manualSeedAvailable) {
-      documentSelect.value = MANUAL_SEED_DOCUMENT_ID;
-    } else {
-      documentSelect.value = '';
-    }
-    return manualSeedAvailable;
   }
 
   function updateQueryModeUI(extraHint = '') {

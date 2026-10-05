@@ -14,13 +14,19 @@ BEGIN;
 
 -- Documentar la base en la base: estos comentarios llegan al modelo como
 -- parte del esquema descubierto (obj_description / col_description).
+COMMENT ON TABLE public.organizations IS 'Organizaciones (tenants) que comparten las tablas de telemetría';
+COMMENT ON COLUMN public.organizations.organization_id IS 'Identificador del tenant';
 COMMENT ON TABLE public.locations IS 'Ubicaciones físicas (aulas, laboratorios, sedes)';
+COMMENT ON COLUMN public.locations.organization_id IS 'Identificador del tenant (rol de tenant_id): organización propietaria de la ubicación';
 COMMENT ON COLUMN public.locations.position IS 'Punto geográfico PostGIS (geography, SRID 4326); ST_Distance devuelve metros';
 COMMENT ON TABLE public.devices IS 'Sensores y actuadores IoT instalados en una ubicación';
+COMMENT ON COLUMN public.devices.organization_id IS 'Identificador del tenant (rol de tenant_id): organización propietaria del equipo';
+COMMENT ON COLUMN public.devices.sampling_interval_seconds IS 'Intervalo de muestreo esperado del equipo, en segundos';
 COMMENT ON COLUMN public.devices.model IS 'Modelo comercial del equipo, por ejemplo ENV-X';
 COMMENT ON COLUMN public.devices.position IS 'Punto geográfico PostGIS (geography, SRID 4326); ST_Distance devuelve metros';
 COMMENT ON COLUMN public.devices.depends_on_device_id IS 'Equipo del que depende este equipo, si existe';
 COMMENT ON TABLE public.measurements IS 'Historial de mediciones (hypertable TimescaleDB particionada por measured_at)';
+COMMENT ON COLUMN public.measurements.organization_id IS 'Identificador del tenant (rol de tenant_id): organización propietaria de la medición';
 COMMENT ON COLUMN public.measurements.variable IS 'Magnitud medida; los valores distinguen mayúsculas y minúsculas';
 COMMENT ON COLUMN public.measurements.value IS 'Valor medido, expresado en la unidad de la columna unit';
 COMMENT ON COLUMN public.measurements.quality IS 'Calidad del dato: GOOD, SUSPECT o BAD';

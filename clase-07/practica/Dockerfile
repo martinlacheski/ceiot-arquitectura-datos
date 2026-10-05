@@ -22,4 +22,3 @@ COPY loader ./loader
 COPY shared ./shared
 
 ENTRYPOINT ["python", "-m", "loader.seed_services"]
-CMD ["--source", "/data/manual-content.json"]

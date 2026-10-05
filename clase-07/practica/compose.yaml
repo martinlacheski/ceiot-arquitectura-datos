@@ -87,7 +87,9 @@ services:
       RAG_MAX_TOP_K: ${RAG_MAX_TOP_K:-4}
       HF_HOME: /models/huggingface
     volumes:
-      - ./data/manual-content.json:/data/manual-content.json:ro
+      - ./Dockerfile:/app/Dockerfile:ro
+      - ./postgres/init:/app/postgres/init:ro
+      - ./postgres/seed:/app/postgres/seed:ro
       - ./compose.yaml:/app/compose.yaml:ro
       - ./.env.example:/app/.env.example:ro
       - ./tests:/app/tests:ro

@@ -7,11 +7,11 @@ import re
 
 from psycopg.rows import dict_row  # type: ignore[import-not-found]
 
-_DOCUMENT_ID = re.compile(r"(?:env-x-manual|upload-[0-9a-f]{24})\Z")
+_DOCUMENT_ID = re.compile(r"upload-[0-9a-f]{24}\Z")
 
 
 def validate_document_id(document_id: str) -> str:
-    """Accept only the canonical seed ID or immutable uploaded-document IDs."""
+    """Accept only immutable uploaded-document IDs."""
 
     if not isinstance(document_id, str) or _DOCUMENT_ID.fullmatch(document_id) is None:
         raise ValueError("document_id no tiene un formato válido")

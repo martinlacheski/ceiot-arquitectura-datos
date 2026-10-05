@@ -6,78 +6,9 @@ from typing import Any
 
 import pytest  # type: ignore[import-not-found]
 
-from loader.ingest_vectors import (  # type: ignore[import-not-found]
-    chunks_from_page_texts,
-    passage_text,
-    validate_object_provenance,
-)
+from loader.pdf_document import PageChunk, passage_text  # type: ignore[import-not-found]
 from shared.embeddings import EXPECTED_DIMENSION, model_dimension, query_text, vector_literal  # type: ignore[import-not-found]
 from shared.retrieval import MAX_COSINE_DISTANCE, nearest_manual_chunks  # type: ignore[import-not-found]
-
-
-PAGE_TEXTS = [
-    """Manual de calibración ENV-X
-Documento env-x-manual · versión 1
-Preparación y condiciones
-Ubicá el equipo sobre una mesa estable y mantené condiciones ambientales controladas durante quince minutos completos.
-Recalibración tras reemplazo de batería
-Esperá cinco minutos antes de energizar el equipo y aplicá el offset del menú CAL cuando la diferencia supere el límite.
-Proveniencia: manual-content.json · versión 1 · página 1/2
-""",
-    """Manual de calibración ENV-X
-Documento env-x-manual · versión 1
-Comprobación
-Retirá la sonda y confirmá que tres lecturas consecutivas permanezcan cercanas antes de aceptar la calibración.
-Recuperación segura
-Si falla la comprobación reiniciá desde las condiciones iniciales y conservá el historial en PostgreSQL siempre.
-Proveniencia: manual-content.json · versión 1 · página 2/2
-""",
-]
-
-
-def test_chunking_preserves_four_section_provenance_records() -> None:
-    chunks = chunks_from_page_texts(
-        PAGE_TEXTS,
-        document_id="env-x-manual",
-        version=1,
-        object_key="manuales/env-x/v1/manual_ENV_X.pdf",
-    )
-
-    assert len(chunks) == 4
-    assert [chunk.chunk_index for chunk in chunks] == [0, 1, 2, 3]
-    assert [chunk.page for chunk in chunks] == [1, 1, 2, 2]
-    assert [chunk.section for chunk in chunks] == [
-        "Preparación y condiciones",
-        "Recalibración tras reemplazo de batería",
-        "Comprobación",
-        "Recuperación segura",
-    ]
-    assert {chunk.document_id for chunk in chunks} == {"env-x-manual"}
-    assert {chunk.version for chunk in chunks} == {1}
-    assert {chunk.object_key for chunk in chunks} == {
-        "manuales/env-x/v1/manual_ENV_X.pdf"
-    }
-    assert all("Proveniencia:" not in chunk.content for chunk in chunks)
-
-
-def test_chunking_rejects_missing_section_instead_of_inventing_content() -> None:
-    broken_pages = [
-        PAGE_TEXTS[0].replace("Recalibración tras reemplazo de batería", ""),
-        PAGE_TEXTS[1],
-    ]
-
-    with pytest.raises(ValueError, match="No se encontró la sección"):
-        chunks_from_page_texts(broken_pages, "doc", 1, "manual.pdf")
-
-
-def test_s3_provenance_must_match_database_identity() -> None:
-    metadata = {"document-id": "env-x-manual", "version": "1", "pages": "2"}
-    validate_object_provenance(metadata, "env-x-manual", 1)
-
-    with pytest.raises(ValueError, match="document_id"):
-        validate_object_provenance(metadata, "otro-manual", 1)
-    with pytest.raises(ValueError, match="versión"):
-        validate_object_provenance(metadata, "env-x-manual", 2)
 
 
 class FakeModel:
@@ -105,11 +36,17 @@ def test_vector_literal_rejects_wrong_dimension() -> None:
 
 
 def test_bge_m3_uses_no_prefixes_unlike_e5() -> None:
-    chunk = chunks_from_page_texts(
-        PAGE_TEXTS, "env-x-manual", 1, "manuales/manual.pdf"
-    )[0]
+    chunk = PageChunk(
+        document_id="upload-0123456789abcdef01234567",
+        version=1,
+        page=1,
+        section="Introducción",
+        chunk_index=0,
+        content="Texto de ejemplo del fragmento.",
+        object_key="documentos/ejemplo.pdf",
+    )
 
-    assert passage_text(chunk) == "Preparación y condiciones. " + chunk.content
+    assert passage_text(chunk) == "Introducción. " + chunk.content
     assert not passage_text(chunk).startswith("passage:")
     assert query_text("¿Cómo calibro el sensor?") == "¿Cómo calibro el sensor?"
     assert not query_text("¿Cómo calibro el sensor?").startswith("query:")

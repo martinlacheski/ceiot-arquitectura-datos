@@ -115,15 +115,15 @@ def test_read_connection_is_pinned_to_rag_readonly_without_owner_fallback(
 
 @pytest.mark.parametrize(
     "document_id",
-    ["env-x-manual", DOCUMENT_ID],
+    [DOCUMENT_ID],
 )
-def test_document_id_accepts_only_seed_or_sha_derived_upload(document_id: str) -> None:
+def test_document_id_accepts_only_sha_derived_upload(document_id: str) -> None:
     assert validate_document_id(document_id) == document_id
 
 
 @pytest.mark.parametrize(
     "document_id",
-    ["", "upload-xyz", "upload-" + "a" * 25, "other-manual", "x' OR 1=1 --"],
+    ["", "upload-xyz", "upload-" + "a" * 25, "other-manual", "env-x-manual", "x' OR 1=1 --"],
 )
 def test_document_id_rejects_unbounded_or_noncanonical_values(document_id: str) -> None:
     with pytest.raises(ValueError, match="formato válido"):

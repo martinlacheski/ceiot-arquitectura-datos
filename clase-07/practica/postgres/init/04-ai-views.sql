@@ -10,7 +10,7 @@ REVOKE ALL ON SCHEMA lab_read FROM PUBLIC;
 -- esquema de aplicación ni permitir crear objetos que alteren el search_path.
 REVOKE USAGE, CREATE ON SCHEMA public FROM PUBLIC;
 
--- location_id se agrega al final: CREATE OR REPLACE VIEW no puede reordenar
+-- location_id y organization_id se agregan al final: CREATE OR REPLACE VIEW no puede reordenar
 -- columnas existentes, sólo puede anexar nuevas al final de la lista.
 CREATE OR REPLACE VIEW lab_read.measurements
 WITH (security_barrier = true)
@@ -22,7 +22,8 @@ SELECT
     measurement.value,
     measurement.unit,
     measurement.quality,
-    device.location_id
+    device.location_id,
+    measurement.organization_id
 FROM public.measurements AS measurement
 JOIN public.devices AS device ON device.device_id = measurement.device_id;
 
@@ -33,7 +34,8 @@ SELECT
     device_id,
     model,
     location_id,
-    depends_on_device_id
+    depends_on_device_id,
+    organization_id
 FROM public.devices;
 
 CREATE OR REPLACE VIEW lab_read.locations
@@ -42,7 +44,8 @@ AS
 SELECT
     location_id,
     name,
-    building
+    building,
+    organization_id
 FROM public.locations;
 
 REVOKE ALL ON lab_read.measurements, lab_read.devices, lab_read.locations FROM PUBLIC;

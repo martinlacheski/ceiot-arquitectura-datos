@@ -28,12 +28,12 @@ def _fake_live_schema(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(workflows, "schema_prompt", lambda: FAKE_SCHEMA)
 CHUNKS = [
     {
-        "document_id": "env-x-manual",
+        "document_id": "upload-0123456789abcdef01234567",
         "version": 1,
         "page": 1,
         "section": "Recalibración tras reemplazo de batería",
         "chunk_index": 1,
-        "object_key": "manuales/env-x/v1/manual_ENV_X.pdf",
+        "object_key": "documentos/upload-0123456789abcdef01234567/v1/manual.pdf",
         "content": "Aplicá un único ajuste cuando la diferencia supere el límite.",
         "cosine_distance": 0.12,
     }
@@ -341,7 +341,7 @@ def test_integrated_orchestrator_routes_manual_only_without_sql_generation(
     monkeypatch.setattr(workflows, "retrieve_manual", lambda _q, _k: CHUNKS)
 
     response = workflows.run_integrated(
-        "¿Cómo debe recalibrarse el sensor ENV-X?", 2, client=chat  # type: ignore[arg-type]
+        "¿Cómo debe recalibrarse el sensor?", 2, client=chat  # type: ignore[arg-type]
     )
 
     assert response["sql"] is None
@@ -521,9 +521,10 @@ def test_root_serves_accessible_static_ui_with_safe_dom_rendering() -> None:
     assert "Escribí tu propia pregunta" in html
     assert "rol de sólo lectura" in html
     assert "lab_read" not in html
-    assert "¿Cómo debe recalibrarse el sensor ENV-X" in html
+    assert "Resumí los puntos principales de los documentos cargados" in html
     assert "¿Cuál fue la temperatura promedio del Aula 204" in html
-    assert "El sensor ENV-X del Aula 204 presenta mediciones anómalas" in html
+    assert "El sensor AMB-001 del Aula 204 presenta mediciones anómalas" in html
+    assert "ENV-X" not in html
     assert 'id="top-k" name="top_k" type="number" min="1" max="4" value="4"' in html
     assert "fetch('/api/query'" in html
     assert ".textContent" in html

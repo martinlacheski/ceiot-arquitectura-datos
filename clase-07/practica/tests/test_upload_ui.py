@@ -76,7 +76,7 @@ def test_upload_summary_sources_and_privacy_contract_are_visible() -> None:
     assert "fragmentos recuperados del PDF" in html
     assert "OpenRouter" in html
     assert "corte de evidencia es aproximado" in html
-    assert "0,55" in html and "manual inicial" in html and "no es universal" in html
+    assert "0,55" in html and "documentos de prueba" in html and "no es universal" in html
     assert "S3" not in html or "navegador" in html
 
 
@@ -224,19 +224,16 @@ def test_examples_choose_explicit_modes_without_submitting_or_fetching() -> None
     assert html.count('data-mode="rag"') == 1
     assert html.count('data-mode="text-to-sql"') == 1
     assert html.count('data-mode="integrated"') == 1
-    assert html.count('data-manual-seed="true"') == 2
-    assert "Documentos (manual inicial) · ¿Cómo debe recalibrarse el sensor ENV-X" in html
+    assert "data-manual-seed" not in html
+    assert "env-x-manual" not in html
+    assert "manual inicial" not in html
+    assert "Documentos · Resumí los puntos principales de los documentos cargados" in html
     assert "Telemetría · ¿Cuál fue la temperatura promedio del Aula 204" in html
-    assert "Integrado (mediciones y manual inicial) · El sensor ENV-X del Aula 204" in html
+    assert "Integrado (mediciones y documentos) · El sensor AMB-001 del Aula 204" in html
     assert "topK.disabled = textToSql" in html
     assert "topK.setAttribute('aria-disabled', String(textToSql))" in html
-    assert 'const MANUAL_SEED_DOCUMENT_ID = "env-x-manual"' in html
+    assert "MANUAL_SEED_DOCUMENT_ID" not in html
     assert "mode.value = example.dataset.mode" in html
-    assert "updateQueryModeUI(manualHint)" in html
-    assert "option.value === MANUAL_SEED_DOCUMENT_ID" in html
-    assert "documentSelect.value = MANUAL_SEED_DOCUMENT_ID" in html
-    assert "documentSelect.value = ''" in html
-    assert "manual inicial no está disponible" in html
 
     handler_start = html.index("document.querySelectorAll('.example')")
     handler_end = html.index("function setText", handler_start)
