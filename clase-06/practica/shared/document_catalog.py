@@ -94,11 +94,13 @@ def list_documents() -> list[dict[str, Any]]:
                 FROM public.manual_documents
                 WHERE storage_status = %s
                   AND index_status = %s
-                  AND chunk_count BETWEEN 1 AND %s
+                  AND chunk_count >= 1
                 ORDER BY title, document_id
                 LIMIT %s
                 """,
-                ("available", "indexed", MAX_DOCUMENT_CHUNKS, MAX_DOCUMENTS),
+                # MAX_DOCUMENT_CHUNKS acota sólo la vista de detalle: un PDF largo
+                # (cientos de fragmentos) también debe aparecer en el listado.
+                ("available", "indexed", MAX_DOCUMENTS),
             )
             return [_document_summary(dict(row)) for row in cursor.fetchall()]
     except (psycopg.Error, TimeoutError, KeyError, RuntimeError, ValueError) as error:
