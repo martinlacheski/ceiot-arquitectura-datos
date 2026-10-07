@@ -46,6 +46,19 @@ def test_pgadmin_file_dialog_exposes_sql_scripts_read_only() -> None:
     assert '"path": "/lab/seed", "restricted_access": True' in block
 
 
+def test_pgadmin_copies_sql_scripts_into_my_storage_on_start() -> None:
+    block = _service("pgadmin")
+
+    # The Shared Storage selector is not always visible in the Open File dialog, so the
+    # scripts are also copied into the user's own storage ("My Storage") as the pgadmin
+    # user before pgAdmin starts. A bind mount there would be root-owned and break boot.
+    assert "entrypoint:" in block
+    assert "/var/lib/pgadmin/storage/" in block
+    assert "sed 's/@/_/'" in block
+    assert "cp -rf /lab/examples /lab/seed" in block
+    assert "exec /entrypoint.sh" in block
+
+
 def test_sql_and_redis_scripts_are_mounted_inside_their_containers() -> None:
     postgres = _service("postgres")
     redis = _service("redis")

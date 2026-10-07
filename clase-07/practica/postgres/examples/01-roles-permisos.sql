@@ -9,7 +9,7 @@
 --
 -- Es repetible: las escrituras de la demo se deshacen con ROLLBACK.
 --
--- Desde pgAdmin: abrí el archivo (Open File → Shared Storage → examples), seleccioná un
+-- Desde pgAdmin: abrí el archivo (Open File → carpeta examples), seleccioná un
 -- bloque y ejecutalo con F5; ejecutar todo el archivo muestra sólo el último resultado,
 -- los avisos (NOTICE) aparecen en la pestaña Messages.
 -- Las secciones 3 y 4 forman una sola transacción: seleccioná de BEGIN a ROLLBACK y

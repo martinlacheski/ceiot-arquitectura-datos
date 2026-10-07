@@ -5,7 +5,7 @@
 --     'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -f /lab/examples/07-replicacion-replica.sql'
 -- Desde el host también: psql -h 127.0.0.1 -p 5438 (puerto POSTGRES_REPLICA_PORT).
 --
--- Desde pgAdmin: abrí el archivo (Open File → Shared Storage → examples), seleccioná un
+-- Desde pgAdmin: abrí el archivo (Open File → carpeta examples), seleccioná un
 -- bloque y ejecutalo con F5; ejecutar todo el archivo muestra sólo el último resultado,
 -- los avisos (NOTICE) aparecen en la pestaña Messages.
 -- (En pgAdmin conectate al servidor de la réplica, puerto POSTGRES_REPLICA_PORT.)

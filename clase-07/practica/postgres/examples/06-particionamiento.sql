@@ -11,7 +11,7 @@
 -- las explores en pgAdmin (ceiot_class7 > Schemas > lab_ops > Tables); la
 -- limpieza está en la última línea del archivo.
 --
--- Desde pgAdmin: abrí el archivo (Open File → Shared Storage → examples), seleccioná un
+-- Desde pgAdmin: abrí el archivo (Open File → carpeta examples), seleccioná un
 -- bloque y ejecutalo con F5; ejecutar todo el archivo muestra sólo el último resultado,
 -- los avisos (NOTICE) aparecen en la pestaña Messages. Los tiempos de carga y de retención
 -- se informan como avisos (NOTICE) con clock_timestamp(). VACUUM no puede correr dentro de

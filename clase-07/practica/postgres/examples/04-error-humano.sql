@@ -13,7 +13,7 @@
 -- Importante: después del accidente NO vuelvas a correr el respaldo (paso 1):
 -- sobrescribiría el dump bueno con los datos ya borrados.
 --
--- Desde pgAdmin: abrí el archivo (Open File → Shared Storage → examples), seleccioná un
+-- Desde pgAdmin: abrí el archivo (Open File → carpeta examples), seleccioná un
 -- bloque y ejecutalo con F5; ejecutar todo el archivo muestra sólo el último resultado,
 -- los avisos (NOTICE) aparecen en la pestaña Messages.
 

@@ -1,6 +1,6 @@
 -- Concurrencia (slides 40-47): PESTAÑA B de tres.
 --
--- Abrí este archivo en la segunda pestaña de Query Tool (Open File → Shared Storage →
+-- Abrí este archivo en la segunda pestaña de Query Tool (Open File → carpeta
 -- examples → 03-concurrencia-b.sql), sobre la misma base que la pestaña A. Ver
 -- 03-concurrencia-a.sql para la explicación completa del laboratorio.
 --

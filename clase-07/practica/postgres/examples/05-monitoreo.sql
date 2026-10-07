@@ -8,7 +8,7 @@
 -- interfaz web (http://localhost:8007), por ejemplo Text-to-SQL como ana y bruno.
 -- Es repetible: la tabla de práctica (lab_monitoring_demo) se crea y se borra acá.
 --
--- Desde pgAdmin: abrí el archivo (Open File → Shared Storage → examples), seleccioná un
+-- Desde pgAdmin: abrí el archivo (Open File → carpeta examples), seleccioná un
 -- bloque y ejecutalo con F5; ejecutar todo el archivo muestra sólo el último resultado,
 -- los avisos (NOTICE) aparecen en la pestaña Messages. La sección 5 usa VACUUM, que no
 -- puede correr dentro de un lote de varias sentencias: ejecutá esa sección sentencia por

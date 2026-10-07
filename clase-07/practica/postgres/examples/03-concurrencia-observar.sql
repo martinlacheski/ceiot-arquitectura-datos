@@ -4,7 +4,7 @@
 -- MIENTRAS la pestaña B está esperando en el PASO 7 del escenario b (en una tercera
 -- pestaña de Query Tool, sin SET ROLE: no ejecutes el PASO 0 de A o B acá).
 --
--- Desde pgAdmin: abrí el archivo (Open File → Shared Storage → examples), seleccioná un
+-- Desde pgAdmin: abrí el archivo (Open File → carpeta examples), seleccioná un
 -- bloque y ejecutalo con F5; ejecutar todo el archivo muestra sólo el último resultado.
 -- Ejecutá cada consulta por separado para ver las tres. Para repetirla, volvé a apretar F5.
 -- En pgAdmin: ceiot_class7 > Dashboard > "Sessions" y "Locks" muestran lo mismo.

@@ -3,7 +3,7 @@
 -- Hacen falta TRES pestañas de Query Tool en pgAdmin, todas sobre la base ceiot_class7
 -- (Tools → Query Tool, o Alt+Shift+Q). Cada pestaña es una sesión distinta:
 --
---   Pestaña A:  abrí este archivo (Open File → Shared Storage → examples → 03-concurrencia-a.sql)
+--   Pestaña A:  abrí este archivo (Open File → carpeta examples → 03-concurrencia-a.sql)
 --   Pestaña B:  abrí 03-concurrencia-b.sql
 --   Pestaña C:  abrí 03-concurrencia-observar.sql   (sólo se usa en el PASO 8)
 --

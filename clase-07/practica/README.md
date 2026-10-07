@@ -134,7 +134,7 @@ Los scripts están montados como sólo lectura dentro de los contenedores, así 
 | [`postgres/examples/`](postgres/examples/) | `/lab/examples` | `/lab/examples` | — |
 | [`examples/`](examples/) | — | — | `/lab/examples` |
 
-**Desde pgAdmin:** en el Query Tool usá el ícono de carpeta (**Open File**) y elegí el almacenamiento compartido (**Shared Storage**) `examples` o `seed`. Los scripts son SQL puro (sin meta-comandos de `psql`), así que corren igual en pgAdmin y con `psql -f`. Abrí el archivo, **seleccioná un bloque** (una sección o una consulta) y ejecutalo con F5 (o ▶). Si ejecutás el archivo entero sin seleccionar nada, pgAdmin muestra sólo el resultado de la última sentencia; los avisos (`NOTICE`, por ejemplo los "Rechazado:" de los scripts de permisos y los tiempos de `06-particionamiento.sql`) aparecen en la pestaña **Messages**. Las carpetas son de sólo lectura: si modificás un script, guardalo en **My Storage**. El laboratorio de concurrencia (sección 6) se hace en pgAdmin con varias pestañas de Query Tool.
+**Desde pgAdmin:** en el Query Tool usá el ícono de carpeta (**Open File**): ahí aparecen las carpetas `examples` y `seed`. Al arrancar, pgAdmin copia los scripts del repositorio a tu almacenamiento personal (**My Storage**), así que están disponibles sin elegir otro almacenamiento; también siguen en **Shared Storage**, si tu versión de pgAdmin muestra ese selector. Los scripts son SQL puro (sin meta-comandos de `psql`), así que corren igual en pgAdmin y con `psql -f`. Abrí el archivo, **seleccioná un bloque** (una sección o una consulta) y ejecutalo con F5 (o ▶). Si ejecutás el archivo entero sin seleccionar nada, pgAdmin muestra sólo el resultado de la última sentencia; los avisos (`NOTICE`, por ejemplo los "Rechazado:" de los scripts de permisos y los tiempos de `06-particionamiento.sql`) aparecen en la pestaña **Messages**. Si modificás un script, guardalo con otro nombre: las copias de `examples` y `seed` se regeneran desde el repositorio cada vez que se recrea el contenedor de pgAdmin. El laboratorio de concurrencia (sección 6) se hace en pgAdmin con varias pestañas de Query Tool.
 
 **Desde el contenedor de PostgreSQL**, con `psql` (cambiá el nombre del archivo):
 
@@ -276,7 +276,7 @@ Salvo que se indique otra cosa, los scripts de esta parte corren como dueño (`c
 
 Necesitás **tres pestañas de Query Tool** en pgAdmin, todas conectadas a `ceiot_class7` (**Tools → Query Tool**, o Alt+Shift+Q). Cada pestaña es una sesión independiente, que es lo que hace falta para reproducir la concurrencia. Todos los escenarios actúan sobre `sampling_interval_seconds` del equipo `AMB-001` (valor inicial 60) con el rol `app_iot` y el tenant 1.
 
-| Pestaña | Archivo (Open File → Shared Storage → `examples`) |
+| Pestaña | Archivo (Open File → carpeta `examples`) |
 | --- | --- |
 | A | `03-concurrencia-a.sql` |
 | B | `03-concurrencia-b.sql` |
