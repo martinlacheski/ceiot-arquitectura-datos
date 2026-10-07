@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 
 import psycopg  # type: ignore[import-not-found]
@@ -23,14 +24,6 @@ def _script(name: str) -> str:
     return (EXAMPLES / name).read_text(encoding="utf-8")
 
 
-SQL_SCRIPTS = (
-    "03-concurrencia-a.sql",
-    "03-concurrencia-b.sql",
-    "03-concurrencia-observar.sql",
-    "04-error-humano.sql",
-    "05-monitoreo.sql",
-    "06-particionamiento.sql",
-)
 
 
 # --- compose ------------------------------------------------------------------
@@ -60,9 +53,34 @@ def test_monitoring_init_is_reapplicable() -> None:
 # --- scripts SQL -----------------------------------------------------------------
 
 
-@pytest.mark.parametrize("name", SQL_SCRIPTS)
-def test_sql_labs_stop_on_first_error(name: str) -> None:
-    assert "\\set ON_ERROR_STOP on" in _script(name)[:1500]
+ALL_SQL = sorted(
+    [*EXAMPLES.glob("*.sql"), *(ROOT / "postgres" / "seed").glob("*.sql")],
+    key=lambda path: path.name,
+)
+
+
+def _executable_sql(text: str) -> str:
+    """Quita comentarios, bloques $$ y literales para buscar sintaxis de psql."""
+    text = re.sub(r"/\*.*?\*/", "", text, flags=re.DOTALL)
+    text = re.sub(r"--[^\n]*", "", text)
+    text = re.sub(r"\$(\w*)\$.*?\$\1\$", "", text, flags=re.DOTALL)
+    return re.sub(r"'(?:[^']|'')*'", "''", text)
+
+
+@pytest.mark.parametrize("path", ALL_SQL, ids=lambda path: path.name)
+def test_sql_scripts_have_no_psql_meta_commands(path: Path) -> None:
+    """pgAdmin envía el texto tal cual al servidor: nada de metacomandos ni :variables de psql."""
+    raw = path.read_text(encoding="utf-8")
+    meta = [line for line in raw.splitlines() if re.match(r"\s*\\", line)]
+    interpolation = re.findall(r"(?<![:\w]):[A-Za-z_]\w*", _executable_sql(raw))
+
+    assert meta == [], f"{path.name} usa metacomandos de psql: {meta[:3]}"
+    assert interpolation == [], f"{path.name} interpola variables de psql: {interpolation[:3]}"
+
+
+@pytest.mark.parametrize("path", [p for p in ALL_SQL if p.parent == EXAMPLES], ids=lambda path: path.name)
+def test_example_scripts_document_pgadmin_usage(path: Path) -> None:
+    assert "Desde pgAdmin" in path.read_text(encoding="utf-8")[:3000]
 
 
 def test_backup_script_is_strict_posix_shell() -> None:
@@ -80,8 +98,8 @@ def test_backup_script_is_strict_posix_shell() -> None:
 @pytest.mark.parametrize(
     ("name", "needles"),
     [
-        ("03-concurrencia-a.sql", ("FOR UPDATE", "REPEATABLE READ", "\\prompt", "SET ROLE app_iot")),
-        ("03-concurrencia-b.sql", ("FOR UPDATE", "REPEATABLE READ", "\\prompt", "SET ROLE app_iot")),
+        ("03-concurrencia-a.sql", ("FOR UPDATE", "REPEATABLE READ", "PASO 1 (A)", "SET ROLE app_iot")),
+        ("03-concurrencia-b.sql", ("FOR UPDATE", "REPEATABLE READ", "PASO 2 (B)", "SET ROLE app_iot")),
         ("03-concurrencia-observar.sql", ("pg_stat_activity", "pg_blocking_pids", "pg_locks")),
         ("05-monitoreo.sql", ("pg_stat_statements", "pg_stat_user_tables", "hypertable_size", "EXPLAIN")),
         (
@@ -95,6 +113,16 @@ def test_labs_contain_their_key_statements(name: str, needles: tuple[str, ...]) 
 
     for needle in needles:
         assert needle in text, f"{name} debería contener {needle!r}"
+
+
+def test_concurrency_steps_are_numbered_blocks_without_prompts() -> None:
+    steps_a = re.findall(r"-- PASO ([1-9]\d*) \(A\)", _script("03-concurrencia-a.sql"))
+    steps_b = re.findall(r"-- PASO ([1-9]\d*) \(B\)", _script("03-concurrencia-b.sql"))
+
+    assert steps_a and steps_b
+    assert sorted(map(int, steps_a + steps_b)) == [n for n in range(1, 25) if n != 8]  # el paso 8 es de la pestaña C (observar)
+    for name in ("03-concurrencia-a.sql", "03-concurrencia-b.sql"):
+        assert "\\prompt" not in _script(name)
 
 
 def test_concurrency_demo_mentions_deadlock_and_resets_the_value() -> None:

@@ -1,4 +1,11 @@
-\set ON_ERROR_STOP on
+-- Búsqueda vectorial nativa (pgvector, operador <=>) frente a ILIKE.
+--
+--   docker compose --env-file .env -f compose.yaml exec postgres sh -c \
+--     'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -f /lab/examples/04-vector.sql'
+--
+-- Desde pgAdmin: abrí el archivo (Open File → Shared Storage → examples), seleccioná un
+-- bloque y ejecutalo con F5; ejecutar todo el archivo muestra sólo el último resultado,
+-- los avisos (NOTICE) aparecen en la pestaña Messages.
 
 -- Este ejemplo trabaja sobre los PDF que cargues desde la interfaz web: no hay
 -- documentos de ejemplo versionados. Si todavía no cargaste ninguno, las
@@ -12,7 +19,7 @@ FROM manual_chunks;
 
 -- La consulta nativa usa como referencia un embedding real ya indexado (el
 -- primer fragmento de cualquier documento cargado). Así se observa <=>
--- directamente en psql, sin fabricar un vector de ejemplo.
+-- directamente en SQL, sin fabricar un vector de ejemplo.
 WITH query_embedding AS (
     SELECT embedding
     FROM manual_chunks

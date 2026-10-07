@@ -134,7 +134,7 @@ Los scripts están montados como sólo lectura dentro de los contenedores, así 
 | [`postgres/examples/`](postgres/examples/) | `/lab/examples` | `/lab/examples` | — |
 | [`examples/`](examples/) | — | — | `/lab/examples` |
 
-**Desde pgAdmin:** en el Query Tool usá el ícono de carpeta (**Open File**) y elegí el almacenamiento compartido `examples` o `seed`. Abrí el archivo y ejecutalo con ▶ o F5. Las carpetas son de sólo lectura: si modificás un script, guardalo en **My Storage**. Los scripts de concurrencia usan `\prompt` y **no funcionan en pgAdmin**, sólo en `psql`.
+**Desde pgAdmin:** en el Query Tool usá el ícono de carpeta (**Open File**) y elegí el almacenamiento compartido (**Shared Storage**) `examples` o `seed`. Los scripts son SQL puro (sin meta-comandos de `psql`), así que corren igual en pgAdmin y con `psql -f`. Abrí el archivo, **seleccioná un bloque** (una sección o una consulta) y ejecutalo con F5 (o ▶). Si ejecutás el archivo entero sin seleccionar nada, pgAdmin muestra sólo el resultado de la última sentencia; los avisos (`NOTICE`, por ejemplo los "Rechazado:" de los scripts de permisos y los tiempos de `06-particionamiento.sql`) aparecen en la pestaña **Messages**. Las carpetas son de sólo lectura: si modificás un script, guardalo en **My Storage**. El laboratorio de concurrencia (sección 6) se hace en pgAdmin con varias pestañas de Query Tool.
 
 **Desde el contenedor de PostgreSQL**, con `psql` (cambiá el nombre del archivo):
 
@@ -166,7 +166,7 @@ Primero la **seguridad** (1–5, filminas 8–38 y 70–74) y después la **oper
 | 3 | Text-to-SQL protegido | 33–35, 72 | UI como Ana y como Bruno; `/api/sql-schema?user_id=ana` | Cada usuario ve sólo sus datos; el esquema que recibe el modelo es el de su organización |
 | 4 | RAG protegido | 36–38, 73 | UI: subir un PDF como Ana y preguntar como Bruno | "No encontré evidencia…" sin llamar a OpenRouter |
 | 5 | Redis por organización | 30 | `sh examples/03-redis.sh` | `GET` permitido para `tenant_1` en `org-1`; `NOPERM` en `org-2` y al escribir |
-| 6 | Concurrencia | 40–47 | 3 terminales: `03-concurrencia-a.sql`, `-b.sql`, `-observar.sql` | Actualización perdida, `FOR UPDATE`, `REPEATABLE READ`, deadlock |
+| 6 | Concurrencia | 40–47 | 3 pestañas de Query Tool en pgAdmin: `03-concurrencia-a.sql`, `-b.sql`, `-observar.sql` | Actualización perdida, `FOR UPDATE`, `REPEATABLE READ`, deadlock |
 | 7 | Backup y restore | 49–53 | `04-backup-restore.sh`, `04-error-humano.sql`, `recuperar` | Los conteos coinciden; el borrado accidental se recupera |
 | 8 | Monitoreo | 54–55 | `psql -f /lab/examples/05-monitoreo.sql` | `pg_stat_activity`, tamaños, `pg_stat_statements`, `VACUUM`, `EXPLAIN` |
 | 9 | Particionamiento | 60–64 | `psql -f /lab/examples/06-particionamiento.sql` | Poda de particiones; `DETACH`+`DROP` vs `DELETE`; chunks de TimescaleDB |
@@ -274,26 +274,26 @@ Salvo que se indique otra cosa, los scripts de esta parte corren como dueño (`c
 
 #### 6. Concurrencia (filminas 40–47)
 
-Necesitás **tres terminales** abiertas en `clase-07/practica`, con `psql` interactivo: usá `exec` **sin** `-T`. Todos los escenarios actúan sobre `sampling_interval_seconds` del equipo `AMB-001` (valor inicial 60) con el rol `app_iot` y el tenant 1.
+Necesitás **tres pestañas de Query Tool** en pgAdmin, todas conectadas a `ceiot_class7` (**Tools → Query Tool**, o Alt+Shift+Q). Cada pestaña es una sesión independiente, que es lo que hace falta para reproducir la concurrencia. Todos los escenarios actúan sobre `sampling_interval_seconds` del equipo `AMB-001` (valor inicial 60) con el rol `app_iot` y el tenant 1.
 
-| Terminal | Comando |
+| Pestaña | Archivo (Open File → Shared Storage → `examples`) |
 | --- | --- |
-| A | `docker compose --env-file .env -f compose.yaml exec postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f /lab/examples/03-concurrencia-a.sql'` |
-| B | el mismo comando con `03-concurrencia-b.sql` |
-| C | el mismo comando con `03-concurrencia-observar.sql` (sólo en el paso 8) |
+| A | `03-concurrencia-a.sql` |
+| B | `03-concurrencia-b.sql` |
+| C | `03-concurrencia-observar.sql` (sólo en el paso 8) |
 
-Los pasos están numerados de 1 a 24 en todo el laboratorio. Antes de cada paso aparece una pausa (`PASO N (terminal X) ...`): seguí el orden de los números, alternando A y B, y apretá Enter cuando le toque a esa terminal.
+Los pasos están numerados de 1 a 24 en todo el laboratorio y cada archivo trae sólo los que le tocan, como bloques `-- PASO N (A)` o `-- PASO N (B)`. En cada pestaña ejecutá primero el `PASO 0` (fija `SET ROLE app_iot` y el tenant). Después **seleccioná un bloque y ejecutalo con F5**, siguiendo el orden de los números y alternando entre A y B. Cada bloque trae `BEGIN`/`COMMIT` explícitos, así que la transacción queda abierta en la pestaña entre un paso y el siguiente (con Auto commit activado, que es el valor por defecto). En vez de variables, los pasos de escritura traen el valor ya calculado y un comentario que dice qué lectura lo originó (por ejemplo "escribí el valor que leíste en el PASO 1 menos 30"): eso conserva la lectura vieja que produce la actualización perdida. Una pestaña que queda "ejecutando" está esperando un candado: es lo esperado en los pasos 7, 20 y 21. Sin pgAdmin también sirve pegar los mismos bloques, en el mismo orden, en dos sesiones interactivas de `psql` (`exec` sin `-T`).
 
 | Escenario | Pasos | Qué debería pasar |
 | --- | --- | --- |
 | a. Actualización perdida | 1–5 | A y B leen 60; A escribe 30, B escribe 120 con su lectura vieja. Valor final **120**: el cambio de A se perdió sin error |
-| b. `SELECT … FOR UPDATE` | 6–11 | B queda **esperando** (la terminal "se cuelga") hasta que A confirma; entonces lee 30 y escribe 40. Valor final **40**: se aplicaron los dos cambios |
+| b. `SELECT … FOR UPDATE` | 6–11 | B queda **esperando** (su pestaña queda ejecutando) hasta que A confirma; entonces lee 30 y escribe 40. Valor final **40**: se aplicaron los dos cambios |
 | c. `REPEATABLE READ` | 12–17 | B recibe `could not serialize access due to concurrent update` en vez de pisar a A, reintenta y el valor final es **90** |
 | d. Deadlock | 18–24 | A toma `AMB-001` y quiere `AIR-002`; B al revés. Tras `deadlock_timeout` (1 s) aparece `deadlock detected` en una de las dos (casi siempre B) |
 
-En el **paso 8**, con B esperando, corré la terminal C. Verás una sesión `active` con `wait_event_type = Lock` (la de B), otra `idle in transaction` (la de A), y `pg_blocking_pids` indicando quién bloquea a quién. En pgAdmin podés ver lo mismo en **ceiot_class7 → Dashboard → Sessions / Locks**.
+En el **paso 8**, con B esperando, ejecutá la pestaña C. Verás una sesión `active` con `wait_event_type = Lock` (la de B), otra `idle in transaction` (la de A), y `pg_blocking_pids` indicando quién bloquea a quién. En pgAdmin podés ver lo mismo en **ceiot_class7 → Dashboard → Sessions / Locks**.
 
-El paso 24 deja ambos equipos en 60. Si cerraste una terminal a medias y quedó otro valor, restauralo como dueño: `UPDATE devices SET sampling_interval_seconds = 60;`.
+El paso 24 deja ambos equipos en 60. Si cerraste una pestaña a medias (ejecutá `ROLLBACK` en ella) y quedó otro valor, restauralo como dueño: `UPDATE devices SET sampling_interval_seconds = 60;`.
 
 #### 7. Backup y restore (filminas 49–53)
 
@@ -301,7 +301,7 @@ El orden importa: **respaldo → error → recuperar**. Los comandos corren dent
 
 ```bash
 docker compose --env-file .env -f compose.yaml exec postgres sh /lab/examples/04-backup-restore.sh
-docker compose --env-file .env -f compose.yaml exec postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f /lab/examples/04-error-humano.sql'
+docker compose --env-file .env -f compose.yaml exec postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -f /lab/examples/04-error-humano.sql'
 docker compose --env-file .env -f compose.yaml exec postgres sh /lab/examples/04-backup-restore.sh recuperar
 ```
 
@@ -324,7 +324,7 @@ docker compose --env-file .env -f compose.yaml exec postgres sh /lab/examples/04
 Antes de correrlo, hacé un par de preguntas Text-to-SQL como Ana y Bruno para que haya consultas que mostrar. Luego:
 
 ```bash
-docker compose --env-file .env -f compose.yaml exec postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f /lab/examples/05-monitoreo.sql'
+docker compose --env-file .env -f compose.yaml exec postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -f /lab/examples/05-monitoreo.sql'
 ```
 
 | Sección | Qué observar |
@@ -341,7 +341,7 @@ docker compose --env-file .env -f compose.yaml exec postgres sh -c 'psql -U "$PO
 #### 9. Particionamiento (filminas 60–64)
 
 ```bash
-docker compose --env-file .env -f compose.yaml exec postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f /lab/examples/06-particionamiento.sql'
+docker compose --env-file .env -f compose.yaml exec postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -f /lab/examples/06-particionamiento.sql'
 ```
 
 Tarda unos 30 segundos: crea el esquema `lab_ops` (sólo del dueño; ningún rol de aplicación lo ve) con ~2,6 millones de filas sintéticas en una tabla común y otra particionada por mes.
@@ -490,8 +490,8 @@ Son opcionales y se definen en `.env`; si faltan, rige el valor por defecto. Tra
 
 ```bash
 docker compose --env-file .env -f compose.yaml up -d postgres
-docker compose --env-file .env -f compose.yaml exec postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f /docker-entrypoint-initdb.d/08-monitoring.sql'
-docker compose --env-file .env -f compose.yaml exec postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f /docker-entrypoint-initdb.d/09-replication.sql'
+docker compose --env-file .env -f compose.yaml exec postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -f /docker-entrypoint-initdb.d/08-monitoring.sql'
+docker compose --env-file .env -f compose.yaml exec postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -f /docker-entrypoint-initdb.d/09-replication.sql'
 ```
 
 ## Mapa de archivos
@@ -526,7 +526,7 @@ docker compose --env-file .env -f compose.yaml run --rm --entrypoint pytest load
 - **`422` en `/api/query`:** falta `user_id` o es desconocido (`ana`, `bruno`), o enviaste un campo extra como `tenant_id`.
 - **Carga con `422`, `413`, `429` o `503`:** PDF inválido, cifrado o sin texto; más de 50 MiB; otra carga en curso; o un servicio caído (`docker compose --env-file .env -f compose.yaml ps`).
 - **La réplica no aparece o no es `streaming`:** levantala con `--profile replica` y esperá a que termine el clon inicial (`logs postgres-replica`). Si quedó a medias, `sh examples/07-failover.sh reset` la recrea.
-- **El script de concurrencia no avanza:** las pausas son `\prompt` de `psql`, no funcionan en pgAdmin ni con `exec -T`. Si dejaste una transacción abierta, cerrá la terminal y restaurá el valor como dueño.
+- **El laboratorio de concurrencia no avanza:** una pestaña "ejecutando" está esperando un candado (es lo esperado en los pasos 7, 20 y 21): pasá a la otra pestaña. Si dejaste una transacción abierta, ejecutá `ROLLBACK` en esa pestaña y restaurá el valor como dueño.
 - **El disco crece con la réplica caída:** el slot `replica_1` retiene WAL; `max_slot_wal_keep_size=1GB` lo acota. Para soltarlo, levantá la réplica o hacé `reset`.
 
 ## Lista de comprobación

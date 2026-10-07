@@ -116,8 +116,10 @@ def test_replication_init_creates_a_replication_role_and_is_reapplicable() -> No
 
 
 @pytest.mark.parametrize("name", ("07-replicacion.sql", "07-replicacion-replica.sql"))
-def test_replication_sql_stops_on_first_error(name: str) -> None:
-    assert "\\set ON_ERROR_STOP on" in (SQL_EXAMPLES / name).read_text(encoding="utf-8")[:1500]
+def test_replication_sql_has_no_psql_meta_commands(name: str) -> None:
+    text = (SQL_EXAMPLES / name).read_text(encoding="utf-8")
+
+    assert not [line for line in text.splitlines() if line.lstrip().startswith("\\")]
 
 
 @pytest.mark.parametrize(

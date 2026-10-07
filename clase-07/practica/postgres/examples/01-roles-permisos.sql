@@ -5,14 +5,19 @@
 -- DO ... EXCEPTION para que el script siga y muestre el mensaje de la base.
 --
 --   docker compose exec postgres sh -c \
---     'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f /lab/examples/01-roles-permisos.sql'
+--     'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -f /lab/examples/01-roles-permisos.sql'
 --
 -- Es repetible: las escrituras de la demo se deshacen con ROLLBACK.
+--
+-- Desde pgAdmin: abrí el archivo (Open File → Shared Storage → examples), seleccioná un
+-- bloque y ejecutalo con F5; ejecutar todo el archivo muestra sólo el último resultado,
+-- los avisos (NOTICE) aparecen en la pestaña Messages.
+-- Las secciones 3 y 4 forman una sola transacción: seleccioná de BEGIN a ROLLBACK y
+-- ejecutalas juntas (un BEGIN suelto deja la transacción abierta en la pestaña).
 
-\echo
-\echo '=== 1. Matriz de privilegios: qué puede hacer cada rol sobre cada tabla ==='
-\echo 'Observá: app_iot sólo lee catálogos e inserta mediciones; ai_readonly sólo lee.'
-\echo 'Ningún rol tiene DELETE.'
+-- === 1. Matriz de privilegios: qué puede hacer cada rol sobre cada tabla ===
+-- Observá: app_iot sólo lee catálogos e inserta mediciones; ai_readonly sólo lee.
+-- Ningún rol tiene DELETE.
 SELECT
     r.rol,
     t.tabla,
@@ -24,15 +29,13 @@ FROM (VALUES ('app_iot'), ('ai_readonly')) AS r (rol)
 CROSS JOIN (VALUES ('organizations'), ('locations'), ('devices'), ('measurements')) AS t (tabla)
 ORDER BY r.rol, t.tabla;
 
-\echo
-\echo '=== 2. Privilegio por columna: app_iot sólo puede actualizar sampling_interval_seconds ==='
+-- === 2. Privilegio por columna: app_iot sólo puede actualizar sampling_interval_seconds ===
 SELECT
     has_column_privilege('app_iot', 'public.devices', 'sampling_interval_seconds', 'UPDATE') AS "puede cambiar sampling_interval_seconds",
     has_column_privilege('app_iot', 'public.devices', 'model', 'UPDATE') AS "puede cambiar model";
 
-\echo
-\echo '=== 3. Como app_iot (tenant 1): lectura e inserción permitidas ==='
-\echo 'Observá: el SELECT devuelve los equipos de la organización 1 y el INSERT dice INSERT 0 1.'
+-- === 3. Como app_iot (tenant 1): lectura e inserción permitidas ===
+-- Observá: el SELECT devuelve los equipos de la organización 1 y el INSERT dice INSERT 0 1.
 BEGIN;
 SET ROLE app_iot;
 SELECT set_config('app.tenant_id', '1', false);
@@ -46,9 +49,8 @@ VALUES (1, 'AMB-001', now(), 'temperature', 22.5, 'C', 'GOOD');
 -- Cambiar el intervalo de muestreo (columna permitida).
 UPDATE devices SET sampling_interval_seconds = 30 WHERE device_id = 'AMB-001';
 
-\echo
-\echo '=== 4. Operaciones que la base rechaza (se muestra el mensaje) ==='
-\echo 'Observá los avisos "Rechazado:": son el mínimo privilegio en acción.'
+-- === 4. Operaciones que la base rechaza (se muestra el mensaje) ===
+-- Observá los avisos "Rechazado:": son el mínimo privilegio en acción.
 DO $$
 BEGIN
     DELETE FROM measurements WHERE device_id = 'AMB-001';
@@ -85,8 +87,7 @@ END $$;
 ROLLBACK;
 RESET ROLE;
 
-\echo
-\echo '=== 5. Como ai_readonly: sólo lectura ==='
+-- === 5. Como ai_readonly: sólo lectura ===
 BEGIN;
 SET ROLE ai_readonly;
 SELECT set_config('app.tenant_id', '1', false);
@@ -101,6 +102,5 @@ END $$;
 ROLLBACK;
 RESET ROLE;
 
-\echo
-\echo '=== Fin: identidad restaurada ==='
+-- === Fin: identidad restaurada ===
 SELECT current_user AS rol_actual;

@@ -1,4 +1,11 @@
-\set ON_ERROR_STOP on
+-- Consultas espaciales con PostGIS (geography, ST_DWithin e índices GiST).
+--
+--   docker compose --env-file .env -f compose.yaml exec postgres sh -c \
+--     'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -f /lab/examples/02-spatial.sql'
+--
+-- Desde pgAdmin: abrí el archivo (Open File → Shared Storage → examples), seleccioná un
+-- bloque y ejecutalo con F5; ejecutar todo el archivo muestra sólo el último resultado,
+-- los avisos (NOTICE) aparecen en la pestaña Messages.
 
 -- ST_DWithin opera sobre geography: el radio está expresado en metros.
 -- Con 30 m desde AIR-002 se esperan exactamente AIR-002 (0 m) y

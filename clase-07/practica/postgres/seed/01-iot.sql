@@ -1,5 +1,3 @@
-\set ON_ERROR_STOP on
-
 BEGIN;
 
 -- Dos organizaciones (tenants) que comparten las mismas tablas. La
