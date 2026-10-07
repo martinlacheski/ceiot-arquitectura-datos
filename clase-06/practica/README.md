@@ -112,7 +112,7 @@ Los scripts están montados como sólo lectura dentro de los contenedores, así 
 | [`postgres/examples/`](postgres/examples/) | `/lab/examples` | — |
 | [`examples/`](examples/) | — | `/lab/examples` |
 
-**Desde pgAdmin:** en el Query Tool usá el ícono de carpeta (**Open File**) y elegí el almacenamiento compartido `examples` o `seed` en el selector del diálogo. Abrí el archivo y ejecutalo con ▶ o F5. Las carpetas son de sólo lectura: si modificás un script, guardalo en tu almacenamiento personal (**My Storage**).
+**Desde pgAdmin:** en el Query Tool usá el ícono de carpeta (**Open File**): ahí aparecen las carpetas `examples` y `seed`. Al arrancar, pgAdmin copia los scripts del repositorio a tu almacenamiento personal (**My Storage**), así que están disponibles sin elegir otro almacenamiento; también siguen en **Shared Storage**, si tu versión de pgAdmin muestra ese selector. Abrí el archivo y ejecutalo con ▶ o F5. Si modificás un script, guardalo con otro nombre: las copias se regeneran desde el repositorio cada vez que se recrea el contenedor de pgAdmin.
 
 **Desde el contenedor de PostgreSQL**, con `psql`:
 

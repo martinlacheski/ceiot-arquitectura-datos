@@ -250,6 +250,17 @@ services:
 
   pgadmin:
     image: dpage/pgadmin4:latest
+    # Copia los scripts a "My Storage" (la carpeta del usuario en pgAdmin, que es lo
+    # primero que muestra "Open File") como el usuario pgadmin, antes de arrancar.
+    # Un montaje directo en esa ruta la dejaría con dueño root y pgAdmin no arrancaría.
+    # Las copias se regeneran desde el repositorio cada vez que se recrea el contenedor.
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        dir="/var/lib/pgadmin/storage/$$(echo "$$PGADMIN_DEFAULT_EMAIL" | sed 's/@/_/')"
+        mkdir -p "$$dir" && cp -rf /lab/examples /lab/seed "$$dir/"
+        exec /entrypoint.sh
     environment:
       PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-student@example.edu}
       PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-class6-local}
