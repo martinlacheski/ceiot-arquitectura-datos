@@ -373,7 +373,7 @@ details.dec .dd b { color: var(--ink); }
 .chip:hover { background: var(--accent-soft); }
 .section-num { font-size: .62em; font-weight: 800; color: var(--accent-ink); }
 
-/* ===== Chrome: toolbar, notes, overlays ===== */
+/* ===== Chrome: toolbar, overlays ===== */
 .toolbar {
   flex: none; display: flex; align-items: center; gap: .4rem; padding: .3rem .6rem;
   background: var(--surface); border-top: 1px solid var(--border); font-size: 14px; color: var(--ink-2);
@@ -389,14 +389,6 @@ details.dec .dd b { color: var(--ink); }
 body.presenting .toolbar { opacity: .15; transition: opacity .2s; }
 body.presenting .toolbar:hover, body.presenting .toolbar:focus-within { opacity: 1; }
 
-.notes-panel { flex: none; display: none; height: 30vh; border-top: 2px solid var(--accent); background: var(--surface); padding: .6rem 1rem; overflow: auto; font-size: 18px; }
-body.show-notes .notes-panel { display: grid; grid-template-columns: 1fr auto; gap: 1rem; }
-.notes-panel h2 { font-size: 15px; text-transform: uppercase; letter-spacing: .06em; color: var(--accent-ink); margin: 0 0 .3rem; }
-.notes-panel ul { margin: 0; padding-left: 1.2em; display: grid; gap: .3rem; }
-.notes-panel .timer { display: flex; flex-direction: column; align-items: center; gap: .4rem; font-variant-numeric: tabular-nums; }
-.notes-panel .timer .clock { font-size: 34px; font-weight: 800; }
-.notes-panel .timer .next { font-size: 13px; color: var(--muted); max-width: 16em; text-align: center; }
-.notes { display: none; }
 
 .overlay { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: none; z-index: 50; padding: 4vh 4vw; }
 .overlay.open { display: grid; place-items: center; }
@@ -451,7 +443,7 @@ svg .tick { font-size: 12px; fill: var(--muted); font-variant-numeric: tabular-n
   html, body { height: auto; overflow: visible; background: #fff; }
   body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   #app { height: auto; display: block; }
-  .progress, .toolbar, .notes-panel, .overlay, .toast { display: none !important; }
+  .progress, .toolbar, .overlay, .toast { display: none !important; }
   .stage { container-type: normal; overflow: visible; height: auto; }
   .slide { position: relative; display: grid !important; width: 100vw; height: 99.6vh; break-after: page; page-break-after: always; overflow: hidden; }
   .slide:last-child { break-after: auto; page-break-after: auto; }
@@ -480,19 +472,11 @@ button.chip-card h3 { color: var(--accent-ink); }
         <p class="kicker">Arquitectura de Datos · Caso de estudio</p>
         <h1>La vida de un dato</h1>
         <p class="lead">Cómo una plataforma de <strong>monitoreo ambiental IoT</strong> aplica series de tiempo, NoSQL, bases en memoria, Row Level Security, text-to-SQL y RAG, desde el sensor hasta el backup.</p>
-        <p class="small muted">Proyecto <code>ceiot-app-base</code> · Teclas: <kbd>→</kbd> avanzar · <kbd>O</kbd> índice · <kbd>N</kbd> notas · <kbd>?</kbd> ayuda</p>
+        <p class="small muted">Proyecto <code>ceiot-app-base</code> · Teclas: <kbd>→</kbd> avanzar · <kbd>O</kbd> índice · <kbd>?</kbd> ayuda</p>
       </div>
     </div>
-    <div class="foot"><span>Material para la clase</span><span>clase-08/practica/index.html</span></div>
+    <div class="foot"><span>Material para la clase</span></div>
   </div>
-  <aside class="notes">
-    <ul>
-      <li>Presentar el caso: un sistema real, completo y versionado, no un ejemplo de juguete.</li>
-      <li>Hilo conductor: seguiremos una lectura de temperatura desde el sensor hasta el backup verificado.</li>
-      <li>Avisar que cada diapositiva cita el archivo de código donde se puede verificar lo que se afirma.</li>
-      <li>Tiempo: ~1 min.</li>
-    </ul>
-  </aside>
 </section>
 
 <section class="slide" data-sec="1" aria-label="El problema">
@@ -518,14 +502,6 @@ button.chip-card h3 { color: var(--accent-ink); }
     </div>
     <div class="foot"><span class="src"><code>esp32/main/telemetry/</code> · <code>backend/app/api/environment/</code></span><span>docs/ciclo-de-vida-datos.md</span></div>
   </div>
-  <aside class="notes">
-    <ul>
-      <li>Mensaje clave: el volumen crece linealmente con equipos × tiempo; sin una estrategia de ciclo de vida, la base solo engorda.</li>
-      <li>Preguntar a la clase: "¿Qué pasa con las lecturas de un equipo cuando se vende o se muda a otro cliente? ¿Quién debería verlas?"</li>
-      <li>Remarcar que hay tres problemas de datos distintos: volumen (series de tiempo), acceso (seguridad por fila) y significado (asistente).</li>
-      <li>Tiempo: ~2 min.</li>
-    </ul>
-  </aside>
 </section>
 
 <section class="slide" data-sec="1" aria-label="Mapa de la clase">
@@ -546,13 +522,6 @@ button.chip-card h3 { color: var(--accent-ink); }
     </div>
     <div class="foot"><span>Narrativa: "la vida de un dato"</span><span>16 secciones</span></div>
   </div>
-  <aside class="notes">
-    <ul>
-      <li>Usar esta diapositiva como mapa: después de recorrer una sección, el botón «↩ Volver» (o la tecla <kbd>B</kbd>) regresa acá.</li>
-      <li>Pedir a los estudiantes que, para cada técnica, piensen qué alternativa habrían elegido; al final se comparan con las decisiones reales (sección 14).</li>
-      <li>Tiempo: ~1 min.</li>
-    </ul>
-  </aside>
 </section>
 
 <!-- ================= 2. ARQUITECTURA ================= -->
@@ -576,15 +545,6 @@ button.chip-card h3 { color: var(--accent-ink); }
     </div>
     <div class="foot"><span class="src"><code>docker-compose.yml</code> (include por componente)</span><span>README.md · Configuración y puertos</span></div>
   </div>
-  <aside class="notes">
-    <ul>
-      <li>Recorrer de izquierda a derecha: dispositivo → broker → ingesta → bases → API → navegador.</li>
-      <li>Remarcar que <code>mqtt-runtime</code> es una aplicación FastAPI separada (<code>app.main_runtime</code>): la ingesta no compite con la API por recursos.</li>
-      <li>Pregunta: "¿Por qué tres almacenes distintos (PostgreSQL, Redis, S3) y no uno solo?" Respuesta: cada uno resuelve un patrón de acceso diferente.</li>
-      <li>El contenedor de embeddings es un perfil opcional; por defecto se usa OpenRouter.</li>
-      <li>Tiempo: ~3 min.</li>
-    </ul>
-  </aside>
 </section>
 
 <section class="slide" data-sec="2" aria-label="Cómo se levanta">
@@ -618,13 +578,6 @@ scripts/levantar.sh --dry-run   # ver qué haría</code></pre>
     </div>
     <div class="foot"><span class="src"><code>scripts/levantar.sh</code> · <code>docker-compose.yml</code></span><span>README.md</span></div>
   </div>
-  <aside class="notes">
-    <ul>
-      <li>Mensaje: reproducibilidad. Un clon nuevo + plantillas <code>.env</code> + certificados = sistema funcionando.</li>
-      <li>Las migraciones corren antes de levantar el backend y como superusuario de migraciones, nunca como el usuario de la aplicación (se verá en Seguridad).</li>
-      <li>Tiempo: ~1 min.</li>
-    </ul>
-  </aside>
 </section>
 
 <!-- ================= 3. RECORRIDO DE UNA LECTURA ================= -->
@@ -645,15 +598,6 @@ scripts/levantar.sh --dry-run   # ver qué haría</code></pre>
     </div>
     <div class="foot"><span class="src"><code>backend/app/core/mqtt/handlers.py</code> · <code>backend/app/core/live.py</code> · <code>frontend/src/app/live/useLivePulse.ts</code></span><span>Use ← → para cambiar de diapositiva</span></div>
   </div>
-  <aside class="notes">
-    <ul>
-      <li>Avanzar paso a paso con los botones; el panel muestra qué pasa y el código o comando real.</li>
-      <li>Remarcar el orden del paso 5: Redis se actualiza <strong>después del commit</strong>. Si la transacción falla, nadie recibe un pulso de un dato que no existe.</li>
-      <li>Pregunta: "¿Qué pasaría si publicáramos en Redis antes del commit?" (lecturas fantasma, inconsistencia).</li>
-      <li>QoS 1 = "al menos una vez": puede haber duplicados; el sistema debe tolerarlos.</li>
-      <li>Tiempo: ~3 min.</li>
-    </ul>
-  </aside>
 </section>
 
 <section class="slide" data-sec="3" aria-label="Contrato MQTT">
@@ -687,14 +631,6 @@ scripts/levantar.sh --dry-run   # ver qué haría</code></pre>
     </div>
     <div class="foot"><span class="src"><code>esp32/main/telemetry/telemetry_payload.h</code> · <code>esp32/main/mqtt/mqtt_manager.c</code></span><span>Valores ilustrativos</span></div>
   </div>
-  <aside class="notes">
-    <ul>
-      <li>El payload es un documento: <code>{sensor: {variable: número}}</code>. Esa misma forma se guarda en JSONB (sección NoSQL).</li>
-      <li>Ventaja: agregar un sensor nuevo no exige una migración de tabla.</li>
-      <li>Pregunta: "¿Qué se pierde al no tener una columna por variable?" (tipos fuertes, restricciones por columna; se compensa validando contra el catálogo).</li>
-      <li>Tiempo: ~2 min.</li>
-    </ul>
-  </aside>
 </section>
 
 <!-- ================= 4. MODELO RELACIONAL ================= -->
@@ -707,15 +643,6 @@ scripts/levantar.sh --dry-run   # ver qué haría</code></pre>
     </div>
     <div class="foot"><span class="src"><code>backend/alembic/versions/</code> (29 migraciones) · <code>backend/app/api/*/models.py</code></span><span>Simplificado: columnas clave</span></div>
   </div>
-  <aside class="notes">
-    <ul>
-      <li>Seis grupos: acceso, dispositivos, catálogo, series de tiempo, firmware, documentos y asistente.</li>
-      <li>El catálogo (sensor, variable, sensor_variable) define rangos válidos: la ingesta rechaza valores fuera de rango.</li>
-      <li><code>user.permissions</code> es JSON: permisos flexibles sin tabla de unión por permiso.</li>
-      <li>Las tres tablas en azul son <strong>hypertables</strong> de TimescaleDB (sección 5).</li>
-      <li>Tiempo: ~2 min.</li>
-    </ul>
-  </aside>
 </section>
 
 <section class="slide" data-sec="4" aria-label="Snapshot de environment_id">
@@ -753,13 +680,6 @@ scripts/levantar.sh --dry-run   # ver qué haría</code></pre>
     </div>
     <div class="foot"><span class="src"><code>backend/alembic/versions/0003_add_device_history_environment_snapshot.py</code> · <code>0027_deviceoperation_device_name.py</code></span><span>docs/ciclo-de-vida-datos.md</span></div>
   </div>
-  <aside class="notes">
-    <ul>
-      <li>Concepto del curso: <strong>dimensión que cambia lentamente</strong> (SCD). Aquí se resuelve guardando el valor vigente en el hecho.</li>
-      <li>Pregunta: "¿Qué alternativa existe?" (tabla de historial de pertenencia con rangos de validez y un JOIN temporal; más normalizado, más costoso de consultar).</li>
-      <li>Tiempo: ~2 min.</li>
-    </ul>
-  </aside>
 </section>
 
 <!-- ================= 5. SERIES DE TIEMPO ================= -->
@@ -789,14 +709,6 @@ scripts/levantar.sh --dry-run   # ver qué haría</code></pre>
     </div>
     <div class="foot"><span class="src"><code>backend/alembic/versions/0001_iot_baseline.py</code> · <code>0028_telemetry_lifecycle.py</code></span><span>TimescaleDB 2.30 sobre PostgreSQL 16</span></div>
   </div>
-  <aside class="notes">
-    <ul>
-      <li>Analogía: un archivo de oficina con una carpeta por semana; buscar "la semana pasada" no obliga a abrir todas.</li>
-      <li>Concepto clave: particionado por rango temporal, automático y transparente para el SQL.</li>
-      <li>Pregunta: "¿Por qué un <code>DELETE</code> masivo es peor que soltar una partición?" (WAL, bloat, vacuum).</li>
-      <li>Tiempo: ~2 min.</li>
-    </ul>
-  </aside>
 </section>
 
 <section class="slide" data-sec="5" aria-label="Agregación con time_bucket">
@@ -821,15 +733,6 @@ scripts/levantar.sh --dry-run   # ver qué haría</code></pre>
     </div>
     <div class="foot"><span class="src"><code>backend/app/api/sensor_catalog/telemetry.py</code> (<code>_AGGREGATE_SQL</code>, <code>resolve_bucket</code>)</span><span>Datos simulados</span></div>
   </div>
-  <aside class="notes">
-    <ul>
-      <li>Cambiar el balde y mostrar: menos puntos viajan al navegador, pero la banda conserva los extremos.</li>
-      <li>Los dos <code>CROSS JOIN LATERAL jsonb_each</code> "abren" el JSON: primero los sensores, después las variables de cada sensor.</li>
-      <li>El origen de los baldes se alinea a la <strong>medianoche local</strong> del usuario: un balde de 1 día va de 00:00 a 00:00 en su zona horaria.</li>
-      <li><code>auto</code> elige el balde más fino que no supere el máximo de puntos pedido.</li>
-      <li>Tiempo: ~3 min.</li>
-    </ul>
-  </aside>
 </section>
 
 <section class="slide" data-sec="5" aria-label="Promedio, banda y moda">
@@ -846,13 +749,6 @@ scripts/levantar.sh --dry-run   # ver qué haría</code></pre>
     </div>
     <div class="foot"><span class="src"><code>backend/app/api/sensor_catalog/telemetry.py</code></span><span>Los valores no numéricos se ignoran con <code>jsonb_typeof(v.value) = 'number'</code></span></div>
   </div>
-  <aside class="notes">
-    <ul>
-      <li>Error común: "la moda es la medida más representativa". Para datos continuos no lo es.</li>
-      <li>Pregunta: "¿Qué medida usarían para detectar que un freezer se cortó 10 minutos?" (máximo de la banda, no el promedio).</li>
-      <li>Tiempo: ~2 min.</li>
-    </ul>
-  </aside>
 </section>
 
 <!-- ================= 6. CICLO DE VIDA ================= -->
@@ -877,14 +773,6 @@ scripts/levantar.sh --dry-run   # ver qué haría</code></pre>
     </div>
     <div class="foot"><span class="src"><code>backend/alembic/versions/0028_telemetry_lifecycle.py</code></span><span>docs/ciclo-de-vida-datos.md</span></div>
   </div>
-  <aside class="notes">
-    <ul>
-      <li>Mensaje: no todos los datos valen lo mismo para siempre. El detalle crudo se resume y luego se descarta.</li>
-      <li>Las operaciones "con historia" se conservan porque el historial de equipos depende de ellas.</li>
-      <li>El ratio depende del volumen y de cuán repetitivos son los datos; en desarrollo hay pocos datos y el tamaño lo dominan los índices.</li>
-      <li>Tiempo: ~2 min.</li>
-    </ul>
-  </aside>
 </section>
 
 <section class="slide" data-sec="6" aria-label="La vida de un chunk">
@@ -902,14 +790,6 @@ scripts/levantar.sh --dry-run   # ver qué haría</code></pre>
     <p class="verdict" id="life-status" aria-live="polite" style="flex:none"></p>
     <div class="foot"><span class="src"><code>0028_telemetry_lifecycle.py</code> (políticas de compresión y retención)</span><span>docs/ciclo-de-vida-datos.md</span></div>
   </div>
-  <aside class="notes">
-    <ul>
-      <li>Mover el control deslizante: a los 7 días el chunk crudo se comprime; a los 90 se borran las lecturas de salud; al año se borra el crudo.</li>
-      <li>Remarcar la última fila: el resumen por hora sigue disponible. Los gráficos de 1 h, 6 h o 1 día siguen funcionando sobre datos de hace dos años.</li>
-      <li>Pregunta: "¿Qué consulta deja de poder responderse después de un año?" (cualquier cosa más fina que una hora).</li>
-      <li>Tiempo: ~2 min.</li>
-    </ul>
-  </aside>
 </section>
 
 <section class="slide" data-sec="6" aria-label="Agregado continuo y promedio de promedios">
@@ -946,14 +826,6 @@ FROM public.telemetry_hourly GROUP BY 1;</code></pre>
     </div>
     <div class="foot"><span class="src"><code>backend/app/api/sensor_catalog/telemetry.py</code> (<code>_ROLLUP_SQL</code>) · <code>backend/tests/postgres/test_telemetry_rollup_parity.py</code></span><span>docs/ciclo-de-vida-datos.md</span></div>
   </div>
-  <aside class="notes">
-    <ul>
-      <li>Error clásico: promediar promedios de grupos de distinto tamaño. Pedir a la clase que calcule ambos antes de mostrar la respuesta.</li>
-      <li>Suma, cantidad, mínimo y máximo son <strong>agregados algebraicos o distributivos</strong>: se pueden combinar. La mediana o la moda no.</li>
-      <li>Para baldes de 1 h o más, la API combina horas completas del resumen con lecturas crudas en los bordes parciales.</li>
-      <li>Tiempo: ~3 min.</li>
-    </ul>
-  </aside>
 </section>
 
 <section class="slide" data-sec="6" aria-label="Trabajos programados">
@@ -969,14 +841,6 @@ FROM public.telemetry_hourly GROUP BY 1;</code></pre>
     </div>
     <div class="foot"><span class="src"><code>0028_telemetry_lifecycle.py</code></span><span>Horarios en UTC (Argentina = UTC−3), después del backup de las 03:00 locales</span></div>
   </div>
-  <aside class="notes">
-    <ul>
-      <li>Lección operativa real: el deadlock apareció en la prueba previa, no en teoría. Escalonar 20 minutos lo evita.</li>
-      <li>Regla del agregado: el refresco recalcula desde los datos crudos; si no hay crudos, "recalcula" vacío.</li>
-      <li>Mostrar el comando correcto: <code>CALL refresh_continuous_aggregate('telemetry_store.telemetry_hourly', '2026-10-01 00:00+00', '2026-10-05 00:00+00');</code></li>
-      <li>Tiempo: ~2 min.</li>
-    </ul>
-  </aside>
 </section>
 <!-- ================= 7. NOSQL ================= -->
 <section class="slide" data-sec="7" id="nosql" aria-label="NoSQL dentro del sistema">
@@ -1023,14 +887,6 @@ SELECT time, "values" -&gt; 'bme280' -&gt;&gt; 'temperature' AS temp
 FROM telemetry WHERE "values" @&gt; '{"bme280": {}}' ORDER BY time DESC LIMIT 5;</code></pre>
     <div class="foot"><span class="src"><code>backend/app/core/live.py</code> · <code>backend/app/core/storage.py</code> · <code>mqtt/acl.conf</code></span><span>NoSQL ≠ "sin SQL": "no solo SQL"</span></div>
   </div>
-  <aside class="notes">
-    <ul>
-      <li>Mensaje: la elección no es "SQL o NoSQL"; se usa cada modelo donde su patrón de acceso conviene.</li>
-      <li>JSONB dentro de PostgreSQL da flexibilidad de documento <em>y</em> transacciones, JOIN y RLS.</li>
-      <li>Pregunta: "¿Por qué los PDF no van en una columna <code>bytea</code>?" (tamaño, backup, streaming, deduplicación por hash).</li>
-      <li>Tiempo: ~2 min.</li>
-    </ul>
-  </aside>
 </section>
 
 <section class="slide" data-sec="7" aria-label="Cuándo usar cada modelo">
@@ -1050,13 +906,6 @@ FROM telemetry WHERE "values" @&gt; '{"bme280": {}}' ORDER BY time DESC LIMIT 5;
     </table>
     <div class="foot"><span>Tabla de síntesis para la discusión</span><span>Las claves S3 incluyen el sha256: el contenido identifica al objeto</span></div>
   </div>
-  <aside class="notes">
-    <ul>
-      <li>Leer la tabla por columnas: "malo para" es tan importante como "bueno para".</li>
-      <li>Pub/sub de Redis es "dispara y olvida": si nadie escucha, el mensaje se pierde. Por eso la verdad vive en PostgreSQL.</li>
-      <li>Tiempo: ~2 min.</li>
-    </ul>
-  </aside>
 </section>
 
 <!-- ================= 8. REDIS ================= -->
@@ -1084,14 +933,6 @@ FROM telemetry WHERE "values" @&gt; '{"bme280": {}}' ORDER BY time DESC LIMIT 5;
     </div>
     <div class="foot"><span class="src"><code>backend/app/core/live.py</code> · <code>backend/app/api/assistant/rate_limit.py</code> · <code>redis/docker-compose.yml</code></span><span>Redis 7</span></div>
   </div>
-  <aside class="notes">
-    <ul>
-      <li>Concepto: caché / vista materializada en memoria. Si se puede reconstruir, no necesita backup.</li>
-      <li>Ventana fija: la clave incluye el número de ventana (<code>assistant:rl:{usuario}:{ventana}:{n}</code>); <code>EXPIRE</code> limpia sola.</li>
-      <li>Pregunta: "¿Qué problema tiene una ventana fija?" (ráfagas en el borde entre dos ventanas; la ventana deslizante lo evita a mayor costo).</li>
-      <li>Tiempo: ~2 min.</li>
-    </ul>
-  </aside>
 </section>
 
 <section class="slide" data-sec="8" aria-label="Redis caído: degradación">
@@ -1108,15 +949,6 @@ FROM telemetry WHERE "values" @&gt; '{"bme280": {}}' ORDER BY time DESC LIMIT 5;
     </div>
     <div class="foot"><span class="src"><code>backend/app/core/redis.py</code> (<code>RETRY_AFTER_FAILURE_SECONDS = 15.0</code>) · <code>backend/app/api/sensor_catalog/router.py</code></span><span>Patrón circuit breaker</span></div>
   </div>
-  <aside class="notes">
-    <ul>
-      <li>Activar el botón: la respuesta pasa de <code>"source": "redis"</code> a <code>"source": "database"</code>. El usuario sigue viendo datos.</li>
-      <li>Circuit breaker: tras una falla no se reintenta durante 15 s. Una caída cuesta un timeout por ventana, no uno por mensaje.</li>
-      <li>El límite del asistente sigue funcionando con un contador en memoria por proceso.</li>
-      <li>Pregunta: "¿Qué se pierde sin Redis?" (el pulso en vivo; los datos siguen guardándose).</li>
-      <li>Tiempo: ~2 min.</li>
-    </ul>
-  </aside>
 </section>
 
 <!-- ================= 9. SEGURIDAD ================= -->
@@ -1135,13 +967,6 @@ FROM telemetry WHERE "values" @&gt; '{"bme280": {}}' ORDER BY time DESC LIMIT 5;
     <p class="lead small">Pregunta guía: si una capa falla (un bug en la API, un prompt malicioso), ¿qué la contiene?</p>
     <div class="foot"><span class="src"><code>backend/app/core/dependencies.py</code> · <code>backend/alembic/versions/</code> · <code>mqtt/acl.conf</code></span><span>docs/roles-base-de-datos.md</span></div>
   </div>
-  <aside class="notes">
-    <ul>
-      <li>Presentar la sección: cinco diapositivas, de la base hacia afuera.</li>
-      <li>Idea central: la base de datos no confía en el código de la aplicación; el código no confía en el LLM.</li>
-      <li>Tiempo: ~1 min.</li>
-    </ul>
-  </aside>
 </section>
 
 <section class="slide" data-sec="9" aria-label="RLS: identidad por request">
@@ -1178,13 +1003,6 @@ CREATE POLICY device_data_access ON sensorreading
     </div>
     <div class="foot"><span class="src"><code>backend/app/core/dependencies.py</code> · <code>backend/alembic/versions/0003_add_device_history_environment_snapshot.py</code></span><span>Política simplificada para la diapositiva</span></div>
   </div>
-  <aside class="notes">
-    <ul>
-      <li>RLS = un <code>WHERE</code> obligatorio que la base agrega a cada consulta. El programador no puede olvidarlo.</li>
-      <li>Error común: creer que RLS protege contra inyección SQL. Quien ejecuta SQL arbitrario como la app puede fijar cualquier identidad. RLS protege a la app de sus propios errores de consulta.</li>
-      <li>Tiempo: ~2 min.</li>
-    </ul>
-  </aside>
 </section>
 
 <section class="slide" data-sec="9" aria-label="Simulador de RLS">
@@ -1210,14 +1028,6 @@ CREATE POLICY device_data_access ON sensorreading
     </div>
     <div class="foot"><span class="src"><code>backend/alembic/versions/0028_telemetry_lifecycle.py</code> (<code>visible()</code>)</span><span>Datos simulados · invitado desde 2026-10-05</span></div>
   </div>
-  <aside class="notes">
-    <ul>
-      <li>Recorrer las identidades en orden. Detenerse en el invitado: ve el establecimiento A solo desde su fecha de acceso (ventana por fila).</li>
-      <li>Mostrar que ESP-03 se mudó de A a B: el dueño de A conserva las lecturas anteriores a la mudanza (snapshot).</li>
-      <li>El predicado es el de la vista <code>public.telemetry</code>: la política <code>device_data_access</code> + bypass de superusuario + ventana del invitado.</li>
-      <li>Tiempo: ~3 min.</li>
-    </ul>
-  </aside>
 </section>
 
 <section class="slide" data-sec="9" aria-label="Dos roles de base">
@@ -1238,14 +1048,6 @@ CREATE POLICY device_data_access ON sensorreading
     </div>
     <div class="foot"><span class="src"><code>backend/alembic/versions/0029_app_role_grants.py</code> · <code>scripts/separar-roles-db.sh</code></span><span>docs/roles-base-de-datos.md</span></div>
   </div>
-  <aside class="notes">
-    <ul>
-      <li>Principio de mínimo privilegio aplicado a la base.</li>
-      <li>Detalle curioso: PostgreSQL no permite quitarle <code>SUPERUSER</code> al rol fundador (OID 10). La solución fue <strong>renombrarlo</strong> a <code>iot_app_admin</code> y crear un <code>iot_app</code> nuevo sin privilegios.</li>
-      <li><code>WITH INHERIT FALSE</code>: <code>iot_app</code> puede cambiar a <code>ai_readonly</code>, pero no hereda sus permisos sin hacerlo.</li>
-      <li>Tiempo: ~2 min.</li>
-    </ul>
-  </aside>
 </section>
 
 <section class="slide" data-sec="9" aria-label="Choque RLS y TimescaleDB">
@@ -1289,14 +1091,6 @@ ERROR: cannot create continuous aggregate on hypertable with row security</code>
     </div>
     <div class="foot"><span class="src"><code>backend/alembic/versions/0028_telemetry_lifecycle.py</code></span><span>docs/ciclo-de-vida-datos.md · "Por qué la telemetría ya no usa RLS"</span></div>
   </div>
-  <aside class="notes">
-    <ul>
-      <li>Ejemplo de decisión con trade-off real: dos requisitos (compresión y seguridad por fila) chocan en la herramienta.</li>
-      <li><code>security_barrier</code> impide que una función del usuario vea filas antes del filtro.</li>
-      <li>Pregunta: "¿Qué riesgo nuevo aparece?" (mantener el predicado de la vista sincronizado con la política; hay tests con un rol real sin bypass).</li>
-      <li>Tiempo: ~3 min.</li>
-    </ul>
-  </aside>
 </section>
 
 <section class="slide" data-sec="9" aria-label="La puerta lateral de los chunks">
@@ -1322,14 +1116,6 @@ FROM _timescaledb_internal._hyper_1_16_chunk;</code></pre>
     </div>
     <div class="foot"><span class="src"><code>backend/alembic/versions/0029_app_role_grants.py</code></span><span>docs/ciclo-de-vida-datos.md · "Roles y permisos sobre hypertables con RLS"</span></div>
   </div>
-  <aside class="notes">
-    <ul>
-      <li>Ejecutar primero la entrada principal (0) y luego la lateral (6.951). Dejar que la clase reaccione.</li>
-      <li>Lección: una abstracción (la hypertable) puede filtrar detalles de implementación (los chunks) que rompen una garantía.</li>
-      <li><code>iot_app</code> sí tiene permisos sobre <code>sensorreading</code>, pero leer un chunk por nombre exige SQL arbitrario; quien tiene eso ya puede fijar cualquier identidad.</li>
-      <li>Tiempo: ~2 min.</li>
-    </ul>
-  </aside>
 </section>
 
 <section class="slide" data-sec="9" aria-label="mTLS de dispositivos">
@@ -1353,13 +1139,6 @@ FROM _timescaledb_internal._hyper_1_16_chunk;</code></pre>
     </div>
     <div class="foot"><span class="src"><code>mqtt/acl.conf</code> · <code>mqtt/pki/</code></span><span>docs/certificados-mqtt.md</span></div>
   </div>
-  <aside class="notes">
-    <ul>
-      <li>La primera regla que coincide decide; la última cierra todo lo demás (<em>deny by default</em>).</li>
-      <li>Pregunta: "¿Qué gana el atacante que roba un equipo?" (solo puede publicar como ese serial; no lee otros equipos).</li>
-      <li>Tiempo: ~1 min.</li>
-    </ul>
-  </aside>
 </section>
 
 <!-- ================= 10. TEXT-TO-SQL ================= -->
@@ -1374,14 +1153,6 @@ FROM _timescaledb_internal._hyper_1_16_chunk;</code></pre>
     </div>
     <div class="foot"><span class="src"><code>backend/app/api/assistant/service.py</code> · <code>sql_guard.py</code> · <code>sql_executor.py</code></span><span>Modelo: <code>openai/gpt-4o-mini</code> vía OpenRouter</span></div>
   </div>
-  <aside class="notes">
-    <ul>
-      <li>Recorrer los pasos. La salida del LLM se trata como <strong>entrada no confiable</strong>, igual que un formulario web.</li>
-      <li>El SQL que se ejecuta se <strong>re-genera desde el árbol sintáctico</strong> validado, no el texto que escribió el modelo.</li>
-      <li>Si la guardia rechaza, se pide <strong>una</strong> reparación al modelo; si vuelve a fallar, no se responde.</li>
-      <li>Tiempo: ~3 min.</li>
-    </ul>
-  </aside>
 </section>
 
 <section class="slide" data-sec="10" aria-label="Text-to-SQL: la guardia">
@@ -1398,14 +1169,6 @@ FROM _timescaledb_internal._hyper_1_16_chunk;</code></pre>
     </div>
     <div class="foot"><span class="src"><code>backend/app/api/assistant/sql_guard.py</code> (sqlglot)</span><span>Veredictos obtenidos con <code>validate_sql</code> real</span></div>
   </div>
-  <aside class="notes">
-    <ul>
-      <li>Recorrer los ejemplos y pedir a la clase que prediga si pasa o no antes de mostrar el veredicto.</li>
-      <li>El <code>set_config</code> es el ataque más interesante: intentaría hacerse pasar por <code>system_admin</code>. La función no está en la lista blanca.</li>
-      <li>Aunque algo pasara la guardia, la capa siguiente es la base: rol <code>ai_readonly</code>, identidad del usuario y vistas filtradas.</li>
-      <li>Tiempo: ~3 min.</li>
-    </ul>
-  </aside>
 </section>
 
 <section class="slide" data-sec="10" aria-label="Text-to-SQL: ejecución acotada">
@@ -1433,14 +1196,6 @@ SET LOCAL search_path = pg_catalog;
     </div>
     <div class="foot"><span class="src"><code>backend/app/api/assistant/sql_executor.py</code> · <code>backend/alembic/versions/0012_ai_read_views.py</code></span><span><code>MAX_RESULT_ROWS = 200</code> · <code>MAX_RESULT_BYTES = 64 * 1024</code></span></div>
   </div>
-  <aside class="notes">
-    <ul>
-      <li><code>SET LOCAL</code>: todo vuelve a su estado al terminar la transacción; no contamina la conexión del pool.</li>
-      <li>El <code>statement_timeout</code> evita que un <code>SELECT</code> legítimo pero costoso tumbe la base.</li>
-      <li>Pregunta: "¿Por qué una función <code>SECURITY DEFINER</code> y no un GRANT sobre la tabla?" (recordar la puerta lateral de los chunks).</li>
-      <li>Tiempo: ~2 min.</li>
-    </ul>
-  </aside>
 </section>
 
 <!-- ================= 11. RAG ================= -->
@@ -1458,15 +1213,6 @@ SET LOCAL search_path = pg_catalog;
     </div>
     <div class="foot"><span class="src"><code>backend/app/api/document/parsing.py</code> · <code>ingestion.py</code> · <code>backend/alembic/versions/0014_rag_document_chunks.py</code></span><span>PDF, TXT, MD, DOCX · subidos por un administrador</span></div>
   </div>
-  <aside class="notes">
-    <ul>
-      <li>El solapamiento evita cortar una idea a la mitad entre dos fragmentos.</li>
-      <li>El archivo se guarda en S3 con su sha256 en la clave: subir dos veces el mismo contenido da <strong>409</strong> (duplicado).</li>
-      <li>La ingesta corre en segundo plano: la subida responde rápido.</li>
-      <li>Pregunta: "¿Por qué pgvector en la misma base y no una base vectorial aparte?" (transacciones, backup único, permisos; se discute en Decisiones).</li>
-      <li>Tiempo: ~2 min.</li>
-    </ul>
-  </aside>
 </section>
 
 <section class="slide" data-sec="11" aria-label="RAG: búsqueda por similitud">
@@ -1485,14 +1231,6 @@ SET LOCAL search_path = pg_catalog;
     </div>
     <div class="foot"><span class="src"><code>backend/app/core/config.py</code> (<code>RAG_TOP_K = 4</code>, <code>RAG_MAX_COSINE_DISTANCE = 0.55</code>) · <code>backend/app/api/document/chunks.py</code> (<code>MAX_TOP_K = 8</code>)</span><span>Juguete: los vectores reales tienen 1024 dimensiones</span></div>
   </div>
-  <aside class="notes">
-    <ul>
-      <li>Distancia coseno = 1 − cos(ángulo). Solo importa la <strong>dirección</strong>, no el largo del vector.</li>
-      <li>Se toman los 4 más cercanos (top-k), pero solo si su distancia es ≤ 0,55. Probar la pregunta "fuera de tema": no hay evidencia y el asistente <strong>no responde</strong>.</li>
-      <li>Error común: creer que el top-k siempre devuelve algo útil. Sin corte de distancia, el LLM recibiría basura e inventaría.</li>
-      <li>Tiempo: ~3 min.</li>
-    </ul>
-  </aside>
 </section>
 
 <section class="slide" data-sec="11" aria-label="RAG: búsqueda segura y citas">
@@ -1521,13 +1259,6 @@ FROM public.rag_search(
     </div>
     <div class="foot"><span class="src"><code>backend/app/api/assistant/rag.py</code> · <code>backend/app/api/document/chunks.py</code></span><span>pgvector · operador <code>&lt;=&gt;</code></span></div>
   </div>
-  <aside class="notes">
-    <ul>
-      <li>RAG = recuperar (búsqueda) + aumentar el prompt + generar. La calidad depende más de la recuperación que del modelo.</li>
-      <li>Pregunta: "¿Qué pasa si cambiamos de modelo de embeddings?" (hay que re-embeber todo; por eso se guarda proveedor y modelo).</li>
-      <li>Tiempo: ~2 min.</li>
-    </ul>
-  </aside>
 </section>
 
 <!-- ================= 12. ASISTENTE ================= -->
@@ -1604,16 +1335,6 @@ Pregunta: ¿Y qué precisión tiene <mark class="hl">ese sensor</mark> según el
     </div>
     <div class="foot"><span class="src"><code>backend/app/api/assistant/chat.py</code> · <code>backend/app/api/assistant/router.py</code></span><span>Endpoint <code>/chat</code> · ejemplo ilustrativo</span></div>
   </div>
-  <aside class="notes">
-    <ul>
-      <li>Mensaje clave: el enrutador no solo <em>clasifica</em> (datos / documentos / ambos); <strong>descompone</strong> la pregunta y <strong>reescribe</strong> cada parte como una pregunta autocontenida (query rewriting + decomposition).</li>
-      <li>Recorrer los cuatro pasos con el ejemplo; aclarar que es ilustrativo, no una salida grabada del modelo. El historial solo sirve para resolver «ese sensor» y «el promedio».</li>
-      <li>Pregunta para la clase: "¿Por qué reescribir la pregunta en vez de pasarla tal cual a cada rama?" Respuesta: cada rama necesita una pregunta autocontenida; text-to-SQL y la búsqueda vectorial no ven el historial, y «ese sensor» no se traduce a SQL ni a un embedding útil.</li>
-      <li>Concepción errónea: "el LLM decide y listo". Su salida nunca se confía: parser estricto + fallback seguro (ambas ramas con la pregunta original). Pulsar "Respuesta inválida" para mostrarlo.</li>
-      <li>Permisos: forzar <code>datos</code> sin <code>telemetry:read</code> da 403; en <code>auto</code> sin ese permiso ni siquiera se llama al enrutador. El cliente puede mandar hasta 20 turnos de historial; el servidor usa los últimos 6.</li>
-      <li>Tiempo: ~3 min.</li>
-    </ul>
-  </aside>
 </section>
 
 <section class="slide" data-sec="12" aria-label="El asistente: ramas y fallas">
@@ -1632,15 +1353,6 @@ Pregunta: ¿Y qué precisión tiene <mark class="hl">ese sensor</mark> según el
     </div>
     <div class="foot"><span class="src"><code>backend/app/api/assistant/chat.py</code></span><span>Endpoint <code>/chat</code></span></div>
   </div>
-  <aside class="notes">
-    <ul>
-      <li>La diapositiva anterior mostró <em>cómo</em> el enrutador divide y reescribe la pregunta; acá el foco es qué ramas se encienden y qué pasa cuando una falla.</li>
-      <li>Repasar rápido con el selector: una pregunta de solo datos, una de solo documentos, una mixta y la salida inválida (que enciende ambas ramas con la pregunta original).</li>
-      <li>Con dos ramas con contenido, un LLM de síntesis combina; con una sola, su respuesta pasa tal cual (sin llamada extra).</li>
-      <li>Activar una falla: la otra rama responde con un aviso. Si fallan ambas, se informa el error.</li>
-      <li>Tiempo: ~2 min.</li>
-    </ul>
-  </aside>
 </section>
 <!-- ================= 13. BACKUPS ================= -->
 <section class="slide" data-sec="13" id="backups" aria-label="Backups: consistencia">
@@ -1657,14 +1369,6 @@ Pregunta: ¿Y qué precisión tiene <mark class="hl">ese sensor</mark> según el
     </div>
     <div class="foot"><span class="src"><code>scripts/backup.sh</code> · <code>scripts/backup_manifest.py</code> · <code>scripts/verificar-backup.sh</code></span><span>docs/backups.md</span></div>
   </div>
-  <aside class="notes">
-    <ul>
-      <li>Problema: mientras se hace el dump, siguen llegando lecturas. Si el manifiesto se calcula en otro instante, los conteos no coinciden aunque el dump esté bien.</li>
-      <li>Solución: un snapshot exportado que comparten <code>pg_dump</code> y la sesión del manifiesto (<code>SET TRANSACTION SNAPSHOT</code>).</li>
-      <li>Pregunta: "¿Cuántas organizaciones descubren que su backup no sirve el día que lo necesitan?"</li>
-      <li>Tiempo: ~2 min.</li>
-    </ul>
-  </aside>
 </section>
 
 <section class="slide" data-sec="13" aria-label="Demo de backup">
@@ -1678,14 +1382,6 @@ Pregunta: ¿Y qué precisión tiene <mark class="hl">ese sensor</mark> según el
     </div>
     <div class="foot"><span class="src"><code>scripts/demo-backup.sh</code></span><span>Salida resumida e ilustrativa; los números reales dependen de la base</span></div>
   </div>
-  <aside class="notes">
-    <ul>
-      <li>En clase se puede correr en vivo: <code>scripts/demo-backup.sh</code> (pausa con Enter entre pasos). Cada verificación tarda unos segundos.</li>
-      <li>Daño 1 (dump truncado): falla el checksum y falla <code>pg_restore</code>.</li>
-      <li>Daño 2, el interesante: se suma 1 fila al conteo del manifiesto <strong>y se recalculan los checksums</strong>. Los archivos parecen íntegros, el dump restaura bien… pero la base restaurada no coincide con lo declarado.</li>
-      <li>Tiempo: ~3 min.</li>
-    </ul>
-  </aside>
 </section>
 
 <section class="slide" data-sec="13" aria-label="Backups en operación">
@@ -1711,13 +1407,6 @@ scripts/verificar-backup.sh backups/&lt;fecha&gt;</code></pre>
     </div>
     <div class="foot"><span class="src"><code>scripts/instalar-backup-cron.sh</code> · <code>scripts/backup-cron.sh</code> · <code>scripts/notificar-backup.py</code></span><span>docs/backups.md</span></div>
   </div>
-  <aside class="notes">
-    <ul>
-      <li>Regla 3-2-1 como contexto: 3 copias, 2 medios, 1 fuera del sitio. La copia "que no se puede borrar" protege contra ransomware y errores humanos.</li>
-      <li>El backup se marca <code>.incompleto</code> hasta terminar: una carpeta sin sufijo es un backup completo.</li>
-      <li>Tiempo: ~2 min.</li>
-    </ul>
-  </aside>
 </section>
 
 <!-- ================= 14. DECISIONES ================= -->
@@ -1735,13 +1424,6 @@ scripts/verificar-backup.sh backups/&lt;fecha&gt;</code></pre>
     </div>
     <div class="foot"><span>Decisiones registradas en <code>odd/tasks/</code> y <code>docs/</code></span><span>1/2</span></div>
   </div>
-  <aside class="notes">
-    <ul>
-      <li>Pedir a la clase que vote antes de abrir cada tarjeta: "¿qué habrían elegido?"</li>
-      <li>Enfatizar que toda decisión tiene un costo explícito; la arquitectura es elegir qué costo pagar.</li>
-      <li>Tiempo: ~3 min.</li>
-    </ul>
-  </aside>
 </section>
 
 <section class="slide" data-sec="14" aria-label="Decisiones de arquitectura (2)">
@@ -1758,12 +1440,6 @@ scripts/verificar-backup.sh backups/&lt;fecha&gt;</code></pre>
     </div>
     <div class="foot"><span>Pregunta para cerrar: ¿cuál de estas decisiones cambiarían con 10.000 equipos?</span><span>2/2</span></div>
   </div>
-  <aside class="notes">
-    <ul>
-      <li>Escala: con 10.000 equipos probablemente cambien la frecuencia de refresco, el tamaño de chunk y quizás el broker; el modelo de seguridad y el ciclo de vida se mantienen.</li>
-      <li>Tiempo: ~3 min.</li>
-    </ul>
-  </aside>
 </section>
 
 <!-- ================= 15. CALIDAD Y OPERACIÓN ================= -->
@@ -1783,14 +1459,6 @@ scripts/verificar-backup.sh backups/&lt;fecha&gt;</code></pre>
     </div>
     <div class="foot"><span class="src"><code>backend/tests/</code> · <code>backend/tests/postgres/</code> · <code>frontend/src/**/*.test.*</code> · <code>esp32/tests/</code></span><span>Conteos aproximados al 12/10/2026</span></div>
   </div>
-  <aside class="notes">
-    <ul>
-      <li>Remarcar los 204 tests con RLS real: antes la suite corría como superusuario y RLS nunca se ejercitaba.</li>
-      <li>Pregunta: "¿Cómo se prueba una política de seguridad?" (con casos negativos: quien NO debe ver, no ve).</li>
-      <li>Los números son aproximados (se cuentan casos de prueba, incluidos los parametrizados).</li>
-      <li>Tiempo: ~2 min.</li>
-    </ul>
-  </aside>
 </section>
 
 <!-- ================= 16. GUION DE LA DEMO ================= -->
@@ -1807,13 +1475,6 @@ scripts/verificar-backup.sh backups/&lt;fecha&gt;</code></pre>
     </ul>
     <div class="foot"><span class="src"><code>tools/emulador-dispositivo.py</code> · <code>mqtt/README.md</code> (CLI de emulación)</span><span>Las casillas se recuerdan en este navegador</span></div>
   </div>
-  <aside class="notes">
-    <ul>
-      <li>Antes de la clase: <code>scripts/levantar.sh</code>, iniciar sesión, tener el emulador listo con un certificado emitido.</li>
-      <li>Plan B si falla la red o Docker: usar los simuladores de esta presentación (secciones 5, 8, 9, 10, 11 y 13).</li>
-      <li>Tiempo: ~8 min en total para la demo.</li>
-    </ul>
-  </aside>
 </section>
 
 <section class="slide" data-sec="16" aria-label="Guion de la demo (2)">
@@ -1850,13 +1511,6 @@ WHERE hypertable_schema = 'telemetry_store' ORDER BY range_start;</code></pre>
     </div>
     <div class="foot"><span class="src"><code>docs/roles-base-de-datos.md</code> · <code>docs/ciclo-de-vida-datos.md</code> ("Cómo inspeccionarlo")</span><span>Botón "Copiar" en cada bloque</span></div>
   </div>
-  <aside class="notes">
-    <ul>
-      <li>Ejecutar las consultas en el orden del bloque. Después de <code>RESET ROLE</code> se vuelve al superusuario.</li>
-      <li>Si no hay chunks comprimidos todavía (instalación nueva), explicar que la compresión aplica a chunks de más de 7 días.</li>
-      <li>Tiempo: incluido en la demo.</li>
-    </ul>
-  </aside>
 </section>
 
 <!-- ================= CIERRE ================= -->
@@ -1879,26 +1533,9 @@ WHERE hypertable_schema = 'telemetry_store' ORDER BY range_start;</code></pre>
     </table>
     <div class="foot"><span>Documentación: <code>docs/ciclo-de-vida-datos.md</code> · <code>docs/roles-base-de-datos.md</code> · <code>docs/backups.md</code></span><span>Gracias.</span></div>
   </div>
-  <aside class="notes">
-    <ul>
-      <li>Invitar a los estudiantes a abrir dos o tres de estos archivos como tarea.</li>
-      <li>Tiempo: ~1 min.</li>
-    </ul>
-  </aside>
 </section>
 
   </main>
-  <section class="notes-panel" id="notes-panel" aria-label="Notas del presentador">
-    <div>
-      <h2 id="notes-title">Notas</h2>
-      <div id="notes-body"></div>
-    </div>
-    <div class="timer" aria-label="Cronómetro del presentador">
-      <div class="clock" id="clock">00:00</div>
-      <div class="row" style="gap:.4rem"><button class="btn" type="button" id="timer-toggle" aria-pressed="false">Iniciar</button><button class="btn" type="button" id="timer-reset">Reiniciar</button></div>
-      <div class="next" id="notes-next"></div>
-    </div>
-  </section>
   <nav class="toolbar" aria-label="Controles de la presentación">
     <button class="tb" type="button" id="btn-prev" aria-label="Diapositiva anterior">◀</button>
     <span class="counter" id="counter">1 / 1</span>
@@ -1906,7 +1543,6 @@ WHERE hypertable_schema = 'telemetry_store' ORDER BY range_start;</code></pre>
     <button class="tb back-btn" type="button" id="btn-back" hidden>↩ <span id="back-label">Volver</span></button>
     <span class="sec-title" id="sec-title"></span>
     <button class="tb" type="button" id="btn-toc" aria-label="Índice de secciones (tecla O)">☰ <span class="lbl-txt">Índice</span></button>
-    <button class="tb" type="button" id="btn-notes" aria-pressed="false" aria-label="Notas del presentador (tecla N)">✎ <span class="lbl-txt">Notas</span></button>
     <button class="tb" type="button" id="btn-theme" aria-pressed="false" aria-label="Tema oscuro (tecla T)">◐ <span class="lbl-txt">Tema</span></button>
     <button class="tb" type="button" id="btn-fs" aria-pressed="false" aria-label="Pantalla completa (tecla F)">⤢ <span class="lbl-txt">Pantalla completa</span></button>
     <button class="tb" type="button" id="btn-help" aria-label="Atajos de teclado (tecla ?)">?</button>
@@ -1929,7 +1565,6 @@ WHERE hypertable_schema = 'telemetry_store' ORDER BY range_start;</code></pre>
         <tr><td><kbd>Inicio</kbd> / <kbd>Fin</kbd></td><td>Primera / última diapositiva</td></tr>
         <tr><td><kbd>O</kbd></td><td>Índice de secciones</td></tr>
         <tr><td><kbd>B</kbd> / <kbd>⌫</kbd></td><td>Volver a la diapositiva desde la que se saltó (también el botón «↩ Volver» y Atrás del navegador)</td></tr>
-        <tr><td><kbd>N</kbd></td><td>Notas del presentador y cronómetro</td></tr>
         <tr><td><kbd>T</kbd></td><td>Tema claro / oscuro</td></tr>
         <tr><td><kbd>F</kbd></td><td>Pantalla completa</td></tr>
         <tr><td><kbd>?</kbd></td><td>Esta ayuda</td></tr>
@@ -2116,7 +1751,6 @@ WHERE hypertable_schema = 'telemetry_store' ORDER BY range_start;</code></pre>
     $('#sec-title').textContent = secLabel(sec) + ' · ' + slideTitle(s);
     $('#btn-prev').disabled = cur === 0;
     $('#btn-next').disabled = cur === slides.length - 1;
-    updateNotes();
     if (!opts.noHash) {
       try { history.replaceState(null, '', '#slide-' + (cur + 1)); } catch (e) { /* file:// may refuse: ignore */ }
     }
@@ -2167,39 +1801,6 @@ WHERE hypertable_schema = 'telemetry_store' ORDER BY range_start;</code></pre>
     if (idx >= 0) jump(idx);
   }
 
-  /* notes + timer */
-  var timer = { running: false, start: 0, acc: 0, h: null };
-  function timerText() {
-    var ms = timer.acc + (timer.running ? Date.now() - timer.start : 0);
-    var s = Math.floor(ms / 1000);
-    return String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0');
-  }
-  function renderTimer() { var c = $('#clock'); if (c) c.textContent = timerText(); }
-  function toggleTimer() {
-    if (timer.running) { timer.acc += Date.now() - timer.start; timer.running = false; clearInterval(timer.h); }
-    else { timer.start = Date.now(); timer.running = true; timer.h = setInterval(renderTimer, 500); }
-    $('#timer-toggle').textContent = timer.running ? 'Pausar' : 'Iniciar';
-    $('#timer-toggle').setAttribute('aria-pressed', String(timer.running));
-    renderTimer();
-  }
-  function resetTimer() {
-    timer.acc = 0; timer.start = Date.now();
-    renderTimer();
-  }
-  function updateNotes() {
-    var s = slides[cur];
-    var n = s.querySelector('.notes');
-    $('#notes-title').textContent = 'Notas · diapositiva ' + (cur + 1) + ' · ' + slideTitle(s);
-    $('#notes-body').innerHTML = n ? n.innerHTML : '<p>(Sin notas)</p>';
-    var nx = slides[cur + 1];
-    $('#notes-next').textContent = nx ? 'Siguiente: ' + slideTitle(nx) : 'Última diapositiva';
-  }
-  function toggleNotes(force) {
-    var on = typeof force === 'boolean' ? force : !document.body.classList.contains('show-notes');
-    document.body.classList.toggle('show-notes', on);
-    $('#btn-notes').setAttribute('aria-pressed', String(on));
-    store('pres-notes', on ? '1' : '0');
-  }
 
   /* theme */
   function effectiveDark() {
@@ -2338,7 +1939,6 @@ WHERE hypertable_schema = 'telemetry_store' ORDER BY range_start;</code></pre>
       case 'Home': e.preventDefault(); jump(0); break;
       case 'End': e.preventDefault(); jump(slides.length - 1); break;
       case 'b': case 'Backspace': if (backStack.length) { e.preventDefault(); goBack(); } break;
-      case 'n': e.preventDefault(); toggleNotes(); break;
       case 't': e.preventDefault(); toggleTheme(); break;
       case 'f': e.preventDefault(); toggleFullscreen(); break;
       default: break;
@@ -3256,12 +2856,9 @@ WHERE hypertable_schema = 'telemetry_store' ORDER BY range_start;</code></pre>
     $('#btn-prev').addEventListener('click', prev);
     $('#btn-next').addEventListener('click', next);
     $('#btn-toc').addEventListener('click', function () { openOverlay('toc-overlay'); });
-    $('#btn-notes').addEventListener('click', function () { toggleNotes(); });
     $('#btn-theme').addEventListener('click', toggleTheme);
     $('#btn-fs').addEventListener('click', toggleFullscreen);
     $('#btn-help').addEventListener('click', function () { openOverlay('help-overlay'); });
-    $('#timer-toggle').addEventListener('click', toggleTimer);
-    $('#timer-reset').addEventListener('click', resetTimer);
     $$('.overlay').forEach(function (o) {
       o.addEventListener('click', function (e) { if (e.target === o) closeOverlays(); });
       $$('.close-x', o).forEach(function (b) { b.addEventListener('click', closeOverlays); });
@@ -3274,9 +2871,7 @@ WHERE hypertable_schema = 'telemetry_store' ORDER BY range_start;</code></pre>
       go(i, { noHash: true });
       renderBack();
     });
-    if (store('pres-notes') === '1') toggleNotes(true);
     go(indexFromHash(), { force: true, noHash: !location.hash });
-    renderTimer();
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
   else boot();

@@ -23,7 +23,6 @@ También está en [PDF](guia-de-estudio.pdf) para imprimir o leer sin el reposit
 | `Inicio` / `Fin` | Primera / última |
 | `O` | Índice de secciones |
 | `B` / `⌫` | Volver a la diapositiva desde la que se saltó (también el botón «↩ Volver» y Atrás del navegador) |
-| `N` | Notas del presentador y cronómetro |
 | `T` | Tema claro / oscuro |
 | `F` | Pantalla completa |
 | `?` | Atajos |
@@ -31,8 +30,6 @@ También está en [PDF](guia-de-estudio.pdf) para imprimir o leer sin el reposit
 
 - **Enlaces directos**: `index.html#slide-12` o el nombre de una sección,
   por ejemplo `index.html#seguridad`, `#text-to-sql` o `#backups`.
-- **Notas del presentador**: ocultas por defecto; `N` abre un panel con qué
-  decir, preguntas para la clase y el tiempo estimado de cada diapositiva.
 - **PDF**: imprimir desde el navegador (`Ctrl+P`, "Guardar como PDF"). Sale
   una diapositiva por página, con las decisiones de arquitectura desplegadas.
 
